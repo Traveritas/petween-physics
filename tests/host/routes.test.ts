@@ -101,6 +101,38 @@ describe('GET /api/motion-pet-physics/config', () => {
 })
 
 describe('PUT /api/motion-pet-physics/config', () => {
+  it('accepts a full card draft — every field of every section, slide fields included', async () => {
+    // The settings card PUTs complete drafts. This round-trip locks the
+    // card↔validator shape agreement: a field the card can send but the
+    // host allowlist forgets ("unknown field") surfaced to a user once
+    // (stale host) and must never surface from a mismatched source tree.
+    const draft = {
+      physics: {
+        gravity: 4200,
+        restitution: 0.55,
+        friction: 0.1,
+        throwMultiplier: 1.2,
+        minThrowSpeed: 300,
+        settleSpeed: 140,
+        maxSpeed: 3800,
+        maxFlightMs: 15_000,
+        minBounceHeightPx: 20,
+        groundFriction: 3,
+      },
+      bounceAnimation: { enabled: true, id: 'user:physics-bounce-pop', interrupt: true },
+      flashPose: { enabled: true, poseKey: 'error', holdMs: 900 },
+      slideAnimationId: 'user:physics-slide-dash',
+      sampleWindowMs: 140,
+      effectDebounceMs: 180,
+      applyFalseTolerance: 3,
+    }
+    const res = await put(draft)
+    expect(res.status).toBe(200)
+    expect((await res.json()).config).toEqual(draft)
+    const got = await (await fetch(`${base}${CONFIG_URL}`)).json()
+    expect(got.config).toEqual(draft)
+  })
+
   it('persists a valid partial patch to disk (atomic write lands)', async () => {
     const res = await put({ physics: { gravity: 4200, friction: 0.2 }, effectDebounceMs: 200 })
     expect(res.status).toBe(200)
