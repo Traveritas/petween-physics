@@ -107,6 +107,34 @@ describe('PhysicsCard', () => {
     expect(container.textContent).toContain('本插件默认 · Physics Bounce Pop')
   })
 
+  it('renders the ground-slide fields; picking a slide animation PUTs the id (null = 不播放)', async () => {
+    const { hub, seams } = makeHub()
+    await render(hub)
+    expect(container.textContent).toContain('落地滑动')
+    expect(container.textContent).toContain('最小反弹高度')
+    expect(container.textContent).toContain('地面摩擦')
+
+    const slideSelect = [...container.querySelectorAll('select')].find((select) =>
+      [...select.options].some((option) => option.textContent === '不播放'),
+    )
+    if (slideSelect === undefined) throw new Error('slide animation select missing')
+    expect(slideSelect.value).toBe('__none__') // DEFAULT slideAnimationId: null
+
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set
+    if (setter === undefined) throw new Error('no native select value setter')
+    act(() => {
+      setter.call(slideSelect, 'builtin:click-wiggle')
+      slideSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+    })
+    expect(seams.sendConfig).toHaveBeenCalledTimes(1)
+    expect((seams.sendConfig.mock.calls[0]![0] as ThrowPhysicsPluginConfig).slideAnimationId).toBe(
+      'builtin:click-wiggle',
+    )
+  })
+
   it('a number edit schedules ONE debounced PUT (300ms) carrying the full config', async () => {
     const { hub, seams } = makeHub()
     await render(hub)

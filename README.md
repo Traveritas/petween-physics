@@ -5,6 +5,7 @@
 - 拖动宠物快速松手 → 按松手瞬间的手速起飞(采样窗口内估算释放速度)
 - 重力下坠 + 四壁反弹(宠物整体始终留在视口内)
 - 碰壁时可播放 squash 变形动画和/或切换图片(保持一段时间后恢复)
+- 弹跳后期反弹高度过低时不再连珠触发碰壁效果:进入**地面滑动**(贴地滑行、地面摩擦减速,可选播一次滑动动画),速度低于落定值后照常停稳;把「最小反弹高度」调到 0 即恢复旧的连弹行为
 - 低速松手 = 停放,不起飞;飞行中用户随时可以半空抓回(人手永远优先)
 - 落定后自动持久化位置;页面隐藏时立即落定;不飞行时不占用任何位置控制权
 
@@ -36,8 +37,9 @@ dsh plugin --profile web remove dsh-motion-pet-physics
 **全部参数均可在设置卡片中运行时编辑**:打开 DSH 设置面板,找到 "Motion Pet Physics" 卡片
 (紧跟主插件的 "Motion Pet" 卡片之后),按分组调整——物理(重力/弹性/摩擦/甩出倍率/起掷与落定
 速度/速度上限/飞行兜底)、碰壁动画(开关/动画下拉/打断开关)、碰壁切图(开关/pose 六选一/保持
-时长),采样/去抖/容差收在"高级"折叠区。改动停手 300ms 后自动保存(原子写盘),卡片头部显示
-保存中/已保存/保存失败状态;"恢复默认"一键写回出厂值。
+时长)、落地滑动(最小反弹高度/地面摩擦/滑动动画下拉),采样/去抖/容差收在"高级"折叠区。
+改动停手 300ms 后自动保存(原子写盘),卡片头部显示保存中/已保存/保存失败状态;"恢复默认"一键
+写回出厂值。
 
 **落盘位置**:`~/.dsh/motion-pet-physics/config.json`(`$DSH_HOME/motion-pet-physics/config.json`,
 重启后生效于新加载)。**手改 JSON 也行**:host 启动时读取该文件——文件不存在用默认值;JSON 损坏
@@ -72,12 +74,15 @@ config——服务端按 `CONFIG_NUMERIC_FIELDS` 表**校验并拒绝**未知字
 | `physics.settleSpeed` | 120 | 0..10000 | 贴底且速度低于此值(px/s)即落定 |
 | `physics.maxSpeed` | 4000 | 100..100000 | 释放速度上限(px/s) |
 | `physics.maxFlightMs` | 20000 | 500..600000 | 飞行时长兜底(近弹性配置也不会永久弹跳) |
+| `physics.minBounceHeightPx` | 12 | 0..2000 | 预测反弹高度(vy²/2g)低于此值(px)改为地面滑动,不再反弹/不触发碰壁效果;0 = 保持旧的连弹行为 |
+| `physics.groundFriction` | 2 | 0..50 | 地面滑动期间的水平衰减(每秒,公式同空气阻尼);越大滑得越短 |
 | `bounceAnimation.enabled` | true | — | 碰壁时播放变形动画 |
 | `bounceAnimation.id` | `user:physics-bounce-pop` | 非空 ≤200 字符 | 动画库 id |
 | `bounceAnimation.interrupt` | true | — | 播放时打断在播动画 |
 | `flashPose.enabled` | false | — | 碰壁时切换图片 |
 | `flashPose.poseKey` | `success` | 六个 pose 之一 | 切换到的 pose 槽位 |
 | `flashPose.holdMs` | 800 | 0..60000 | 图片保持 ms(≤0 保持到下个状态变化) |
+| `slideAnimationId` | `null` | null 或非空 ≤200 字符 | 进入地面滑动时播放一次的动画 id;null = 不播 |
 | `sampleWindowMs` | 120 | 10..2000 | 拖拽测速窗口 |
 | `effectDebounceMs` | 150 | 0..5000 | 同壁效果去抖窗口 |
 | `applyFalseTolerance` | 2 | 1..60(整数) | 连续 apply 失败容忍次数 |
@@ -89,7 +94,7 @@ config——服务端按 `CONFIG_NUMERIC_FIELDS` 表**校验并拒绝**未知字
   (校验 + 原子写 `$DSH_HOME/motion-pet-physics/config.json`),并在服务出现时注册默认动画
   (幂等,一次性)。
 - **client 半**(`src/client/`):`inject: ['motion-pet/client', 'slots']`。
-  - `physics.ts`:纯函数积分器(半隐式欧拉),dt 钳制 ≤40ms,包围盒 = `stageSize × scale`,四壁反弹 ×restitution,贴底低速落定。
+  - `physics.ts`:纯函数积分器(半隐式欧拉),dt 钳制 ≤40ms,包围盒 = `stageSize × scale`,四壁反弹 ×restitution,贴底低速落定;反弹高度低于 `minBounceHeightPx` 时转地面滑动(vy 归零、贴地、`groundFriction` 衰减、侧壁只夹不弹、不报告碰壁),滑动中速度低于 `settleSpeed` 落定。
   - `throw-controller.ts`:订阅拖拽手势与舞台快照;拖拽期间采样(不持租约),松手时估算释放速度;
     起飞时申请独占位置租约(`requestPositionControl`),rAF 逐帧 `driver.apply`;碰壁触发效果(同壁去抖);
     落定 `commit()` 后立即 `release()`。用户半空抓取、页面隐藏、会话消失、dispose 都会终止飞行。

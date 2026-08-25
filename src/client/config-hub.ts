@@ -43,19 +43,20 @@ export interface PhysicsConfigHubOptions {
   sendConfig?: (patch: PhysicsConfigPatch) => Promise<{ config: ThrowPhysicsPluginConfig }>
 }
 
-const INITIAL_SNAPSHOT: PhysicsHubSnapshot = {
-  config: DEFAULT_CONFIG,
+/** Fresh per-instance defaults: getConfig() callers may mutate the result. */
+const initialSnapshot = (): PhysicsHubSnapshot => ({
+  config: structuredClone(DEFAULT_CONFIG),
   loaded: false,
   loadError: null,
   saving: false,
   saveError: null,
-}
+})
 
 export class PhysicsConfigHub {
   private readonly fetchConfig: () => Promise<{ config: ThrowPhysicsPluginConfig }>
   private readonly sendConfig: (patch: PhysicsConfigPatch) => Promise<{ config: ThrowPhysicsPluginConfig }>
   private readonly listeners = new Set<PhysicsConfigListener>()
-  private snapshot: PhysicsHubSnapshot = INITIAL_SNAPSHOT
+  private snapshot: PhysicsHubSnapshot = initialSnapshot()
   private loadPromise: Promise<PhysicsHubSnapshot> | null = null
 
   constructor(options: PhysicsConfigHubOptions = {}) {
@@ -81,8 +82,9 @@ export class PhysicsConfigHub {
       (error: unknown) => {
         // Silent fallback: DEFAULT_CONFIG keeps the throw controller fully
         // functional; the error state tells the card (and its retry button).
+        // A clone, never the shared DEFAULT_CONFIG reference (L4).
         this.snapshot = {
-          config: DEFAULT_CONFIG,
+          config: structuredClone(DEFAULT_CONFIG),
           loaded: false,
           loadError: error instanceof Error ? error.message : String(error),
           saving: this.snapshot.saving,

@@ -26,20 +26,27 @@ class FakeDriver implements PositionDriver {
   applyResult = true
   commits = 0
   releases = 0
+  /** M5a: every lease call in order ('apply'/'commit'/'release'). */
+  readonly calls: string[] = []
+  /** Set to make commit() reject (the M5a failure path). */
+  commitError: Error | null = null
   private readonly dragListeners = new Set<() => void>()
 
   apply(x: number, y: number): boolean {
     this.applyCalls.push({ x, y })
+    this.calls.push('apply')
     return this.applyResult
   }
 
   commit(): Promise<void> {
     this.commits += 1
-    return Promise.resolve()
+    this.calls.push('commit')
+    return this.commitError === null ? Promise.resolve() : Promise.reject(this.commitError)
   }
 
   release(): void {
     this.releases += 1
+    this.calls.push('release')
   }
 
   onUserDrag(listener: () => void): () => void {
@@ -157,6 +164,7 @@ interface HarnessOverrides {
   physics?: Partial<PhysicsConfig>
   bounceAnimation?: Partial<BounceAnimationConfig>
   flashPose?: Partial<FlashPoseConfig>
+  slideAnimationId?: string | null
   sampleWindowMs?: number
   effectDebounceMs?: number
   applyFalseTolerance?: number
@@ -169,6 +177,7 @@ const makeHarness = (configOverrides: HarnessOverrides = {}): Harness => {
     sampleWindowMs: configOverrides.sampleWindowMs ?? DEFAULT_CONFIG.sampleWindowMs,
     effectDebounceMs: configOverrides.effectDebounceMs ?? DEFAULT_CONFIG.effectDebounceMs,
     applyFalseTolerance: configOverrides.applyFalseTolerance ?? DEFAULT_CONFIG.applyFalseTolerance,
+    slideAnimationId: configOverrides.slideAnimationId ?? DEFAULT_CONFIG.slideAnimationId,
     physics: { ...DEFAULT_CONFIG.physics, ...(configOverrides.physics ?? {}) },
     bounceAnimation: { ...DEFAULT_CONFIG.bounceAnimation, ...(configOverrides.bounceAnimation ?? {}) },
     flashPose: { ...DEFAULT_CONFIG.flashPose, ...(configOverrides.flashPose ?? {}) },
@@ -320,8 +329,9 @@ describe('throw → flight', () => {
   })
 
   it('commits then releases on settle', async () => {
-    // restitution 0: the first floor contact kills vy; speed 0 < settle.
-    const h = makeHarness({ physics: { restitution: 0 } })
+    // restitution 0 + the legacy threshold 0: the first floor contact kills
+    // vy, speed 0 < settle (the default minBounceHeightPx would slide instead).
+    const h = makeHarness({ physics: { restitution: 0, minBounceHeightPx: 0 } })
     performDrag(h, { x: 500, y: 690 }, { vx: 0, vy: 400 })
     const driver = h.service.drivers[0]!
     h.clock.value += 16
@@ -419,6 +429,82 @@ describe('wall effects', () => {
     expect(h.service.plays).toHaveLength(0) // animation disabled
     expect(h.service.flashes).toHaveLength(1)
     expect(h.service.flashes[0]).toEqual({ poseKey: 'success', holdMs: 800 })
+  })
+})
+
+describe('ground slide (minBounceHeightPx)', () => {
+  it('plays the slide animation once at slide entry, fires no bounce effects while sliding, settles + commits', async () => {
+    const h = makeHarness({ slideAnimationId: 'builtin:click-wiggle' })
+    // A downward throw with real gravity: bounces shrink below the 12px
+    // threshold, the pet starts sliding, decays under groundFriction and
+    // settles (commit) — no bottom-wall machine-gun along the way.
+    performDrag(h, { x: 450, y: 100 }, { vx: 300, vy: 600 })
+    const driver = h.service.drivers[0]!
+    expect(driver).toBeDefined()
+
+    let frames = 0
+    while (driver.releases === 0 && frames < 600) {
+      h.clock.value += 16
+      h.pumpFrames(1)
+      frames += 1
+    }
+    await flushMicrotasks()
+    expect(driver.commits).toBe(1) // settled and persisted
+    expect(driver.releases).toBe(1)
+
+    const slidePlays = h.service.plays.filter((play) => play.id === 'builtin:click-wiggle')
+    expect(slidePlays).toHaveLength(1) // exactly one slide animation, at entry
+    // While sliding no bounce/flash effects fire: every play after the slide
+    // animation is the slide itself (the last bottom bounce precedes it).
+    const slideIndex = h.service.plays.findIndex((play) => play.id === 'builtin:click-wiggle')
+    expect(h.service.plays.slice(slideIndex + 1)).toEqual([])
+    // The settle position is on the floor (y = 700 = viewport 800 - box 100).
+    expect(driver.applyCalls.at(-1)!.y).toBe(700)
+  })
+
+  it('slideAnimationId null (default) plays nothing at slide entry', async () => {
+    const h = makeHarness({ bounceAnimation: { enabled: false, id: 'user:physics-bounce-pop', interrupt: true } })
+    performDrag(h, { x: 450, y: 100 }, { vx: 300, vy: 600 })
+    const driver = h.service.drivers[0]!
+    let frames = 0
+    while (driver.releases === 0 && frames < 600) {
+      h.clock.value += 16
+      h.pumpFrames(1)
+      frames += 1
+    }
+    await flushMicrotasks()
+    expect(driver.commits).toBe(1)
+    expect(h.service.plays).toEqual([]) // bounce disabled, slide unset: silent slide
+  })
+})
+
+describe('settle commit/release contract (M5a)', () => {
+  it('commit lands strictly before release (order pinned)', async () => {
+    const h = makeHarness({ physics: { restitution: 0, minBounceHeightPx: 0 } })
+    performDrag(h, { x: 500, y: 690 }, { vx: 0, vy: 400 })
+    const driver = h.service.drivers[0]!
+    h.clock.value += 16
+    h.pumpFrames(1)
+    await flushMicrotasks()
+    expect(driver.commits).toBe(1)
+    expect(driver.releases).toBe(1)
+    // Releasing first would let a remote overlay coordinate overwrite the
+    // settled position — the order is the contract.
+    expect(driver.calls.indexOf('commit')).toBeLessThan(driver.calls.indexOf('release'))
+  })
+
+  it('a failed commit still releases the lease and only warns', async () => {
+    const h = makeHarness({ physics: { restitution: 0, minBounceHeightPx: 0 } })
+    performDrag(h, { x: 500, y: 690 }, { vx: 0, vy: 400 })
+    const driver = h.service.drivers[0]!
+    driver.commitError = new Error('host gone')
+    h.clock.value += 16
+    h.pumpFrames(1)
+    await flushMicrotasks()
+    await flushMicrotasks()
+    expect(driver.commits).toBe(1)
+    expect(driver.releases).toBe(1) // the lease is never stranded on a failed commit
+    expect(consoleWarn).toHaveBeenCalledWith('motion-pet-physics: settle commit failed', expect.any(Error))
   })
 })
 

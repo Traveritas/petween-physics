@@ -190,6 +190,26 @@ describe('PUT /api/motion-pet-physics/config', () => {
     const curlish = await put({ physics: { gravity: 5000 } })
     expect(curlish.status).toBe(200)
   })
+
+  it('allows a same-origin Origin (M5b): Origin matching the Host header passes', async () => {
+    const sameOrigin = await fetch(`${base}${CONFIG_URL}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', origin: base },
+      body: JSON.stringify({ physics: { gravity: 5000 } }),
+    })
+    expect(sameOrigin.status).toBe(200)
+    expect(((await sameOrigin.json()) as { config: ThrowPhysicsPluginConfig }).config.physics.gravity).toBe(5000)
+  })
+
+  it("rejects an opaque 'null' Origin (M5b): sandboxed frames and file:// pages cannot write", async () => {
+    const nullOrigin = await fetch(`${base}${CONFIG_URL}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', origin: 'null' },
+      body: JSON.stringify({ physics: { gravity: 5000 } }),
+    })
+    expect(nullOrigin.status).toBe(403)
+    expect(((await nullOrigin.json()) as { error: { code: string } }).error.code).toBe('CROSS_ORIGIN')
+  })
 })
 
 describe('corrupt / hand-edited config file', () => {

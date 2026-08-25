@@ -1,6 +1,6 @@
 /**
  * client/physics.ts — the pure ballistic engine (spec: gravity fall inside
- * the viewport, wall bounces, settle-on-floor).
+ * the viewport, wall bounces, settle-on-floor, ground slide).
  *
  * WHY a pure module with zero DOM/cordis imports: the integrator must be
  * unit-testable to the pixel and reusable independent of how positions are
@@ -17,8 +17,14 @@
  *   velocity component times restitution; the wall is REPORTED only when
  *   the velocity actually pointed into it (resting against a wall is not
  *   a collision);
+ * - a floor hit whose predicted rebound height (vy²/2g after restitution)
+ *   falls below minBounceHeightPx stops bouncing: vy pins to 0 and the ball
+ *   SLIDES on the floor, vx decaying under groundFriction per second, side
+ *   walls clamping without rebound or wall reports (slide = no impact
+ *   effects). minBounceHeightPx 0 keeps the legacy bounce-always behavior;
  * - the ball settles (flight over) when it touches the floor and its speed
- *   is below settleSpeed — a complete stop, velocities zeroed.
+ *   is below settleSpeed — a complete stop, velocities zeroed. A vertical
+ *   low drop can slide and settle within the same step.
  */
 
 /** Which wall(s) the ball hit during one step. */
@@ -30,6 +36,8 @@ export interface BallState {
   y: number
   vx: number
   vy: number
+  /** true while skidding on the floor after the bounces fell below the threshold. */
+  sliding: boolean
   /** true once settled — further steps are no-ops until a new flight starts. */
   resting: boolean
 }
@@ -39,6 +47,14 @@ export interface PhysicsParams {
   restitution: number
   friction: number
   settleSpeed: number
+  /**
+   * Predicted rebound height (px, vy²/2g after restitution) below which a
+   * floor hit becomes a ground slide instead of a bounce. 0 = always bounce
+   * (the legacy machine-gun low bounce behavior — some users like it).
+   */
+  minBounceHeightPx: number
+  /** Horizontal decay per second while sliding on the floor (same formula as air friction). */
+  groundFriction: number
 }
 
 /**
@@ -81,53 +97,81 @@ export function stepBall(
   if (state.resting) return { state: { ...state }, walls: [] }
   const dt = clampNumber(dtMs, 0, MAX_STEP_MS) / 1000
   const restitution = clampNumber(params.restitution, 0, 1)
-  const friction = Math.max(0, params.friction)
-
-  let { x, y, vx, vy } = state
-  // Continuous horizontal air drag (friction is per-second; a step's dt-sized
-  // slice applies here, bounce steps included).
-  vx *= Math.max(0, 1 - friction * dt)
-  vy += params.gravity * dt
-  x += vx * dt
-  y += vy * dt
 
   const maxX = Math.max(0, bounds.width - bounds.boxSize)
   const maxY = Math.max(0, bounds.height - bounds.boxSize)
   const walls: Wall[] = []
+  let { x, y, vx, vy, sliding } = state
 
-  if (x <= 0) {
-    x = 0
-    if (vx < 0) {
-      vx = -vx * restitution
-      walls.push('left')
-    }
-  } else if (x >= maxX) {
-    x = maxX
-    if (vx > 0) {
-      vx = -vx * restitution
-      walls.push('right')
-    }
-  }
-  if (y <= 0) {
-    y = 0
-    if (vy < 0) {
-      vy = -vy * restitution
-      walls.push('top')
-    }
-  } else if (y >= maxY) {
+  if (sliding) {
+    // Ground slide: gravity off, vy pinned, vx decaying under groundFriction.
+    // Side walls clamp WITHOUT rebounding and report nothing — the slide is
+    // explicitly the no-more-impact-effects phase.
+    vx *= Math.max(0, 1 - Math.max(0, params.groundFriction) * dt)
+    x += vx * dt
     y = maxY
-    if (vy > 0) {
-      vy = -vy * restitution
-      walls.push('bottom')
+    vy = 0
+    if (x <= 0) {
+      x = 0
+      if (vx < 0) vx = 0
+    } else if (x >= maxX) {
+      x = maxX
+      if (vx > 0) vx = 0
+    }
+  } else {
+    // Continuous horizontal air drag (friction is per-second; a step's dt-sized
+    // slice applies here, bounce steps included).
+    vx *= Math.max(0, 1 - Math.max(0, params.friction) * dt)
+    vy += params.gravity * dt
+    x += vx * dt
+    y += vy * dt
+
+    if (x <= 0) {
+      x = 0
+      if (vx < 0) {
+        vx = -vx * restitution
+        walls.push('left')
+      }
+    } else if (x >= maxX) {
+      x = maxX
+      if (vx > 0) {
+        vx = -vx * restitution
+        walls.push('right')
+      }
+    }
+    if (y <= 0) {
+      y = 0
+      if (vy < 0) {
+        vy = -vy * restitution
+        walls.push('top')
+      }
+    } else if (y >= maxY) {
+      y = maxY
+      if (vy > 0) {
+        const bounceVy = vy * restitution
+        // Predicted rebound height vy²/2g; gravity ≤ 0 never triggers a slide
+        // (the formula's height diverges — keep the legacy bounce behavior).
+        const height =
+          params.gravity > 0 ? (bounceVy * bounceVy) / (2 * params.gravity) : Number.POSITIVE_INFINITY
+        if (height < Math.max(0, params.minBounceHeightPx)) {
+          // Rebound too small to see: stop bouncing, slide the rest out. No
+          // 'bottom' report — the slide contact is not an impact.
+          vy = 0
+          sliding = true
+        } else {
+          vy = -bounceVy
+          walls.push('bottom')
+        }
+      }
     }
   }
 
-  const speed = Math.hypot(vx, vy)
+  const speed = sliding ? Math.abs(vx) : Math.hypot(vx, vy)
   const onFloor = y >= maxY - FLOOR_EPSILON_PX
   if (onFloor && speed < params.settleSpeed) {
-    return { state: { x, y: maxY, vx: 0, vy: 0, resting: true }, walls }
+    return { state: { x, y: maxY, vx: 0, vy: 0, sliding: false, resting: true }, walls }
   }
-  return { state: { x, y, vx, vy, resting: false }, walls }
+  return { state: { x, y, vx, vy, sliding, resting: false }, walls }
 }
 
 /**

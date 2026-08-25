@@ -63,6 +63,31 @@ describe('load()', () => {
   })
 })
 
+describe('getConfig() default clones (L4)', () => {
+  it('before the first load, returns a per-instance clone — mutating it never touches DEFAULT_CONFIG', () => {
+    const hub = new PhysicsConfigHub({ fetchConfig: () => new Promise(() => {}) }) // never lands
+    const config = hub.getConfig()
+    expect(config).toEqual(DEFAULT_CONFIG)
+    expect(config).not.toBe(DEFAULT_CONFIG)
+    config.physics.gravity = 99_999
+    expect(DEFAULT_CONFIG.physics.gravity).not.toBe(99_999)
+  })
+
+  it('the load-failure fallback is also a clone', async () => {
+    const hub = new PhysicsConfigHub({
+      fetchConfig: async () => {
+        throw new Error('boom')
+      },
+    })
+    await hub.load()
+    const fallen = hub.getConfig()
+    expect(fallen).toEqual(DEFAULT_CONFIG)
+    expect(fallen).not.toBe(DEFAULT_CONFIG)
+    fallen.physics.gravity = 99_999
+    expect(DEFAULT_CONFIG.physics.gravity).not.toBe(99_999)
+  })
+})
+
 describe('update()', () => {
   it('PUTs the patch, broadcasts the merged server config, and tracks saving', async () => {
     const sendConfig = vi.fn(async (patch: PhysicsConfigPatch) => ({

@@ -44,6 +44,15 @@ export interface PhysicsConfig {
   maxSpeed: number
   /** Fallback flight ceiling (ms): force-settle past this (e.g. restitution 1). */
   maxFlightMs: number
+  /**
+   * Predicted rebound height (px) below which a floor hit becomes a ground
+   * slide (no rebound, no wall effects; vx decays under groundFriction until
+   * settleSpeed). 0 keeps the legacy always-bounce behavior — raise it to
+   * slide sooner, if you actually want the machine-gun low bounces set 0.
+   */
+  minBounceHeightPx: number
+  /** Horizontal decay per second while sliding on the floor (same formula as air friction). */
+  groundFriction: number
 }
 
 /** Wall-impact animation effect (played through the main plugin's service). */
@@ -67,6 +76,13 @@ export interface ThrowPhysicsPluginConfig {
   physics: PhysicsConfig
   bounceAnimation: BounceAnimationConfig
   flashPose: FlashPoseConfig
+  /**
+   * Animation played ONCE when the ground slide begins (the bounces fell
+   * below minBounceHeightPx and the pet starts skidding). Null = silent
+   * slide. Any library id works; an unknown id degrades to nothing at
+   * play time through the main plugin's service.
+   */
+  slideAnimationId: string | null
   /** Drag-velocity sampling window (ms) ending at release. */
   sampleWindowMs: number
   /** Same-wall effect debounce (ms): corner jitter fires one effect, not a burst. */
@@ -84,6 +100,7 @@ export interface PhysicsConfigPatch {
   physics?: Partial<PhysicsConfig>
   bounceAnimation?: Partial<BounceAnimationConfig>
   flashPose?: Partial<FlashPoseConfig>
+  slideAnimationId?: string | null
   sampleWindowMs?: number
   effectDebounceMs?: number
   applyFalseTolerance?: number
@@ -110,6 +127,8 @@ const NUMERIC_FIELDS_SOURCE = {
   'physics.settleSpeed': { min: 0, max: 10_000 },
   'physics.maxSpeed': { min: 100, max: 100_000 },
   'physics.maxFlightMs': { min: 500, max: 600_000 },
+  'physics.minBounceHeightPx': { min: 0, max: 2_000 },
+  'physics.groundFriction': { min: 0, max: 50 },
   'flashPose.holdMs': { min: 0, max: 60_000 },
   sampleWindowMs: { min: 10, max: 2_000 },
   effectDebounceMs: { min: 0, max: 5_000 },
@@ -137,6 +156,8 @@ export const DEFAULT_CONFIG: ThrowPhysicsPluginConfig = {
     settleSpeed: 120,
     maxSpeed: 4000,
     maxFlightMs: 20_000,
+    minBounceHeightPx: 12,
+    groundFriction: 2,
   },
   bounceAnimation: {
     enabled: true,
@@ -148,6 +169,7 @@ export const DEFAULT_CONFIG: ThrowPhysicsPluginConfig = {
     poseKey: 'success',
     holdMs: 800,
   },
+  slideAnimationId: null,
   sampleWindowMs: 120,
   effectDebounceMs: 150,
   applyFalseTolerance: 2,

@@ -16,17 +16,39 @@ import {
   type ViewportBounds,
 } from '../../src/client/physics'
 
-const PARAMS: PhysicsParams = { gravity: 3000, restitution: 0.6, friction: 0, settleSpeed: 120 }
+const PARAMS: PhysicsParams = {
+  gravity: 3000,
+  restitution: 0.6,
+  friction: 0,
+  settleSpeed: 120,
+  // 0 = the legacy bounce-always behavior; slide tests override this.
+  minBounceHeightPx: 0,
+  groundFriction: 2,
+}
 /** 1000×800 viewport, 100px pet box → walls at x∈[0,900], y∈[0,700]. */
 const BOUNDS: ViewportBounds = { width: 1000, height: 800, boxSize: 100 }
 
-const ball = (x: number, y: number, vx: number, vy: number): BallState => ({ x, y, vx, vy, resting: false })
+const ball = (x: number, y: number, vx: number, vy: number): BallState => ({
+  x,
+  y,
+  vx,
+  vy,
+  sliding: false,
+  resting: false,
+})
 
 describe('stepBall — free flight', () => {
   it('integrates one gravity step (semi-implicit Euler)', () => {
     // vy is updated before the position update: vy' = g·dt, y' = y + vy'·dt.
     const { state, walls } = stepBall(ball(500, 100, 0, 0), 40, PARAMS, BOUNDS)
-    expect(state).toEqual({ x: 500, y: 100 + 3000 * 0.04 * 0.04, vx: 0, vy: 3000 * 0.04, resting: false })
+    expect(state).toEqual({
+      x: 500,
+      y: 100 + 3000 * 0.04 * 0.04,
+      vx: 0,
+      vy: 3000 * 0.04,
+      sliding: false,
+      resting: false,
+    })
     expect(walls).toEqual([])
   })
 
@@ -38,7 +60,7 @@ describe('stepBall — free flight', () => {
   })
 
   it('is a no-op once resting (and reports no walls)', () => {
-    const resting: BallState = { x: 500, y: 700, vx: 0, vy: 0, resting: true }
+    const resting: BallState = { x: 500, y: 700, vx: 0, vy: 0, sliding: false, resting: true }
     const { state, walls } = stepBall(resting, 100, PARAMS, BOUNDS)
     expect(state).toEqual(resting)
     expect(walls).toEqual([])
@@ -109,7 +131,7 @@ describe('stepBall — friction, settle, clamps', () => {
     // After the floor bounce the speed is √(30² + 88.8²) ≈ 93.7 < 120.
     // (x still travels its 30px/s · 16ms slice before the floor clamps y.)
     const { state, walls } = stepBall(ball(500, 700, 30, 100), 16, PARAMS, BOUNDS)
-    expect(state).toEqual({ x: 500 + 30 * 0.016, y: 700, vx: 0, vy: 0, resting: true })
+    expect(state).toEqual({ x: 500 + 30 * 0.016, y: 700, vx: 0, vy: 0, sliding: false, resting: true })
     expect(walls).toEqual(['bottom'])
   })
 
@@ -120,7 +142,12 @@ describe('stepBall — friction, settle, clamps', () => {
 
   it('treats floor contact within the epsilon as on-floor', () => {
     const maxY = 700
-    const { state } = stepBall({ x: 500, y: maxY - FLOOR_EPSILON_PX / 2, vx: 30, vy: -20, resting: false }, 16, PARAMS, BOUNDS)
+    const { state } = stepBall(
+      { x: 500, y: maxY - FLOOR_EPSILON_PX / 2, vx: 30, vy: -20, sliding: false, resting: false },
+      16,
+      PARAMS,
+      BOUNDS,
+    )
     expect(state.resting).toBe(true)
     expect(state.y).toBe(maxY)
   })
@@ -136,6 +163,85 @@ describe('stepBall — friction, settle, clamps', () => {
     const { state } = stepBall(ball(500, 300, 500, 0), 16, { ...PARAMS, gravity: 0 }, full)
     expect(state.x).toBe(0)
     expect(state.vx).toBeCloseTo(-500 * 0.6, 10)
+  })
+})
+
+describe('stepBall — ground slide (minBounceHeightPx)', () => {
+  // Threshold 12px ⇒ a rebound needs |vy| ≥ √(2·3000·12) ≈ 268.3 px/s to bounce.
+  const SLIDE = { ...PARAMS, minBounceHeightPx: 12 }
+
+  it('a floor hit whose predicted rebound is below the threshold starts a slide instead of bouncing', () => {
+    // vy at contact = 300 + g·dt = 348 → rebound 208.8 → 7.27px < 12 → slide.
+    const { state, walls } = stepBall(ball(500, 750, 400, 300), 16, SLIDE, BOUNDS)
+    expect(state.sliding).toBe(true)
+    expect(state.vy).toBe(0)
+    expect(state.y).toBe(700)
+    expect(state.vx).toBe(400) // air friction 0: untouched at slide entry
+    expect(state.x).toBeCloseTo(500 + 400 * 0.016, 10)
+    expect(state.resting).toBe(false) // 400 px/s ≥ settleSpeed: keeps sliding
+    expect(walls).toEqual([]) // no bottom report — no bounce effect for the slide contact
+  })
+
+  it('a rebound at or above the threshold still bounces (bottom reported)', () => {
+    // vy at contact = 450 + g·dt = 498 → rebound 298.8 → 14.88px ≥ 12 → bounce.
+    const { state, walls } = stepBall(ball(500, 750, 0, 450), 16, SLIDE, BOUNDS)
+    expect(state.sliding).toBe(false)
+    expect(state.vy).toBeCloseTo(-298.8, 10)
+    expect(walls).toEqual(['bottom'])
+  })
+
+  it('minBounceHeightPx 0 keeps the legacy bounce-always behavior (even sub-pixel rebounds)', () => {
+    // vy at contact = 148 → rebound 88.8 → 1.31px predicted height: still bounces.
+    const { state, walls } = stepBall(ball(500, 750, 0, 100), 16, PARAMS, BOUNDS)
+    expect(state.sliding).toBe(false)
+    expect(walls).toEqual(['bottom'])
+  })
+
+  it('sliding decays vx under groundFriction, stays pinned to the floor, reports no walls', () => {
+    const sliding: BallState = { x: 500, y: 700, vx: 400, vy: 0, sliding: true, resting: false }
+    const { state, walls } = stepBall(sliding, 40, { ...SLIDE, groundFriction: 2 }, BOUNDS)
+    expect(state.vx).toBeCloseTo(400 * (1 - 2 * 0.04), 10)
+    expect(state.y).toBe(700)
+    expect(state.vy).toBe(0)
+    expect(state.sliding).toBe(true)
+    expect(state.resting).toBe(false)
+    expect(walls).toEqual([])
+  })
+
+  it('groundFriction never reverses vx', () => {
+    const sliding: BallState = { x: 500, y: 700, vx: 400, vy: 0, sliding: true, resting: false }
+    const { state } = stepBall(sliding, 40, { ...SLIDE, groundFriction: 100 }, BOUNDS)
+    expect(state.vx).toBe(0)
+  })
+
+  it('sliding settles once |vx| drops below settleSpeed', () => {
+    let state: BallState = { x: 500, y: 700, vx: 400, vy: 0, sliding: true, resting: false }
+    for (let i = 0; i < 200 && !state.resting; i += 1) {
+      state = stepBall(state, 40, SLIDE, BOUNDS).state
+    }
+    expect(state.resting).toBe(true)
+    expect(state.sliding).toBe(false)
+    expect(state.y).toBe(700)
+    expect(state.vx).toBe(0)
+    expect(state.vy).toBe(0)
+  })
+
+  it('a slide reaching a side wall clamps and stops there (no rebound, no wall report)', () => {
+    const sliding: BallState = { x: 899, y: 700, vx: 400, vy: 0, sliding: true, resting: false }
+    const { state, walls } = stepBall(sliding, 40, SLIDE, BOUNDS)
+    expect(state.x).toBe(900)
+    expect(state.vx).toBe(0)
+    expect(state.resting).toBe(true) // stopped against the wall: below settleSpeed
+    expect(walls).toEqual([])
+  })
+
+  it('a vertical low drop settles in the same frame it would have slid', () => {
+    // vy at contact = 348 → rebound 208.8 → 7.27px < 12: slide starts and,
+    // with vx 0 already below settleSpeed, settles in the same step.
+    const { state, walls } = stepBall(ball(500, 750, 0, 300), 16, SLIDE, BOUNDS)
+    expect(state.resting).toBe(true)
+    expect(state.sliding).toBe(false)
+    expect(walls).toEqual([])
   })
 })
 

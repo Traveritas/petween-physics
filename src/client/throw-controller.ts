@@ -164,7 +164,7 @@ export class ThrowController {
     const now = this.deps.now()
     this.flight = {
       driver,
-      state: { x: snapshot.x, y: snapshot.y, vx: velocity.vx, vy: velocity.vy, resting: false },
+      state: { x: snapshot.x, y: snapshot.y, vx: velocity.vx, vy: velocity.vy, sliding: false, resting: false },
       lastTime: now,
       startedAt: now,
       applyFalseStreak: 0,
@@ -209,6 +209,11 @@ export class ThrowController {
           }
 
     const result = stepBall(flight.state, dt, config.physics, bounds)
+    // Slide entry (bounces fell below minBounceHeightPx): fire the optional
+    // one-shot slide animation exactly once per flight, on the transition.
+    if (!flight.state.sliding && result.state.sliding && config.slideAnimationId !== null) {
+      this.deps.service.playAnimation(config.slideAnimationId, { interrupt: true })
+    }
     flight.state = result.state
 
     const applied = flight.driver.apply(result.state.x, result.state.y)

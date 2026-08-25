@@ -46,6 +46,7 @@ export class ConfigValidationError extends Error {
 const PHYSICS_SECTION = 'physics'
 const BOUNCE_SECTION = 'bounceAnimation'
 const FLASH_SECTION = 'flashPose'
+const SLIDE_ANIMATION_FIELD = 'slideAnimationId'
 const TOP_LEVEL_NUMERIC = ['sampleWindowMs', 'effectDebounceMs', 'applyFalseTolerance'] as const
 type SectionKey = typeof PHYSICS_SECTION | typeof BOUNCE_SECTION | typeof FLASH_SECTION
 
@@ -59,6 +60,8 @@ const SECTION_FIELDS: Record<SectionKey, readonly string[]> = {
     'settleSpeed',
     'maxSpeed',
     'maxFlightMs',
+    'minBounceHeightPx',
+    'groundFriction',
   ],
   bounceAnimation: ['enabled', 'id', 'interrupt'],
   flashPose: ['enabled', 'poseKey', 'holdMs'],
@@ -152,6 +155,21 @@ function mergeConfig(patch: unknown, base: ThrowPhysicsPluginConfig, strict: boo
         }
         checkSectionField(section, field, fieldValue, merged, issues)
       }
+      continue
+    }
+    if (key === SLIDE_ANIMATION_FIELD) {
+      // null (default, no slide animation) or a non-empty library id.
+      if (
+        value !== null &&
+        (typeof value !== 'string' || value.length === 0 || value.length > ANIMATION_ID_MAX_LENGTH)
+      ) {
+        issues.push({
+          path: key,
+          message: `expected null or a non-empty id of at most ${ANIMATION_ID_MAX_LENGTH} characters`,
+        })
+        continue
+      }
+      ;(merged as unknown as Target)[key] = value
       continue
     }
     if ((TOP_LEVEL_NUMERIC as readonly string[]).includes(key)) {

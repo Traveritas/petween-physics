@@ -148,6 +148,9 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   const patchTop = (field: 'sampleWindowMs' | 'effectDebounceMs' | 'applyFalseTolerance', value: number): void => {
     scheduleSave({ ...draft, [field]: value })
   }
+  const patchSlideAnimation = (value: string): void => {
+    scheduleSave({ ...draft, slideAnimationId: value === '__none__' ? null : value })
+  }
 
   const resetDefaults = (): void => {
     if (saveTimer.current !== null) {
@@ -293,6 +296,32 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
         label="打断在播动画"
         checked={bounce.interrupt}
         onChange={(checked) => patchBounce('interrupt', checked)}
+      />
+
+      <div className={styles.groupTitle}>落地滑动</div>
+      <NumberField
+        label="最小反弹高度"
+        min={ranges['physics.minBounceHeightPx'].min}
+        max={ranges['physics.minBounceHeightPx'].max}
+        step={1}
+        unit="px"
+        value={physics.minBounceHeightPx}
+        onChange={(value) => patchPhysics('minBounceHeightPx', value)}
+      />
+      <Slider
+        label="地面摩擦"
+        min={ranges['physics.groundFriction'].min}
+        max={ranges['physics.groundFriction'].max}
+        step={0.1}
+        unit="/s"
+        value={physics.groundFriction}
+        onChange={(value) => patchPhysics('groundFriction', value)}
+      />
+      <SelectRow
+        label="滑动动画"
+        value={draft.slideAnimationId ?? '__none__'}
+        options={[{ value: '__none__', label: '不播放' }, ...animationOptions]}
+        onChange={patchSlideAnimation}
       />
 
       <div className={styles.groupTitle}>碰壁切图</div>
