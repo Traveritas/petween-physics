@@ -9,12 +9,12 @@
  * exactly one pose-swap event, and rejects pose-swap inside `interaction`
  * — so `interaction` is the only kind that expresses "deform, never swap".
  *
- * The definition mirrors the shape of dsh-motion-pet's documented custom
+ * The definition mirrors the shape of petween's documented custom
  * examples (docs/motion-format.md §10): strength-parameterized squash with
  * `spring-soft` recovery, same keyframe times and easings on both tracks
  * (the shared `transition` layer requires per-interval easing consistency).
  */
-import type { AnimationDefinitionMirror, MotionPetHostService } from './types'
+import type { AnimationDefinitionMirror, PetweenHostService } from './types'
 
 /** Library id: `user:<pack>-<name>` convention (pack = this companion). */
 export const BOUNCE_POP_ANIMATION_ID = 'user:physics-bounce-pop'
@@ -59,7 +59,7 @@ export const BOUNCE_POP_ANIMATION: AnimationDefinitionMirror = {
  * optional eye candy); the caller decides how to report it.
  */
 export async function ensureBounceAnimation(
-  service: Pick<MotionPetHostService, 'hasAnimation' | 'registerAnimation'>,
+  service: Pick<PetweenHostService, 'hasAnimation' | 'registerAnimation'>,
 ): Promise<'registered' | 'already-present'> {
   if (await service.hasAnimation(BOUNCE_POP_ANIMATION_ID)) return 'already-present'
   await service.registerAnimation(BOUNCE_POP_ANIMATION)

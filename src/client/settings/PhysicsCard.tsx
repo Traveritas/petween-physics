@@ -17,7 +17,7 @@
  * the hub's saving/error state; "恢复默认" PUTs DEFAULT_CONFIG.
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
-import { getMotionPetAnimations, type AnimationOption } from '../api'
+import { getPetweenAnimations, type AnimationOption } from '../api'
 import {
   CONFIG_NUMERIC_FIELDS,
   DEFAULT_CONFIG,
@@ -34,7 +34,7 @@ const SAVE_DEBOUNCE_MS = 300
 /**
  * A few main-plugin builtin interaction-friendly ids, hardcoded so the
  * dropdown works even without the main plugin's /animations answer. Source:
- * dsh-motion-pet src/core/transition-presets.ts (verified against 1.x).
+ * petween src/core/transition-presets.ts (verified against 1.x).
  */
 const BUILTIN_ANIMATIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'builtin:click-pop', label: '内置 · 点击弹跳 (click-pop)' },
@@ -62,7 +62,7 @@ export interface PhysicsCardProps {
 
 export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   const hub = props.hub ?? physicsConfigHub
-  const fetchAnimations = props.fetchAnimations ?? getMotionPetAnimations
+  const fetchAnimations = props.fetchAnimations ?? getPetweenAnimations
   // Stable identities for useSyncExternalStore (prototype methods passed bare
   // would lose `this`; a fresh arrow per render would re-subscribe every render).
   const subscribe = useCallback((listener: () => void) => hub.subscribe(listener), [hub])
@@ -97,7 +97,7 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   }, [draft, snapshot.loaded, snapshot.loadError, snapshot.config])
 
   // Impact-animation dropdown data source: the main plugin's custom library
-  // (GET /api/motion-pet/animations) + hardcoded builtins + the plugin
+  // (GET /api/petween/animations) + hardcoded builtins + the plugin
   // default. A failed read just leaves the static lists.
   useEffect(() => {
     let alive = true
@@ -115,7 +115,7 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   }, [fetchAnimations])
 
   if (draft === null) {
-    return <div className={styles.status}>正在加载 Motion Pet Physics 配置…</div>
+    return <div className={styles.status}>正在加载 Petween Physics 配置…</div>
   }
 
   const scheduleSave = (next: ThrowPhysicsPluginConfig): void => {
@@ -190,7 +190,7 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   return (
     <div className={styles.card}>
       <div className={styles.cardHeader}>
-        <span className={styles.cardTitle}>Motion Pet Physics</span>
+        <span className={styles.cardTitle}>Petween Physics</span>
         <span
           className={
             snapshot.saveError !== null ? `${styles.cardSummary} ${styles.errorText}` : styles.cardSummary
@@ -380,7 +380,7 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
       </details>
 
       <div className={styles.cardFooter}>
-        <span className={styles.hint}>配置落盘于 ~/.dsh/motion-pet-physics/config.json,也可手改。</span>
+        <span className={styles.hint}>配置落盘于 ~/.dsh/petween-physics/config.json,也可手改。</span>
         <button type="button" className={styles.button} disabled={snapshot.saving} onClick={resetDefaults}>
           恢复默认
         </button>

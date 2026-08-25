@@ -1,6 +1,6 @@
-# dsh-motion-pet-physics
+# Petween Physics
 
-[dsh-motion-pet](../dsh-motion-pet) 的"抛掷物理"附属插件：把宠物**扔出去**，它会受重力下坠、在屏幕内弹跳，落定后停在新位置。
+[petween](https://github.com/Traveritas/petween) 的"抛掷物理"附属插件（包名 `petween-physics`，前身为 `dsh-motion-pet-physics`，0.2.0 起随主插件更名）：把宠物**扔出去**，它会受重力下坠、在屏幕内弹跳，落定后停在新位置。
 
 - 拖动宠物快速松手 → 按松手瞬间的手速起飞(采样窗口内估算释放速度)
 - 重力下坠 + 四壁反弹(宠物整体始终留在视口内)
@@ -9,15 +9,16 @@
 - 低速松手 = 停放,不起飞;飞行中用户随时可以半空抓回(人手永远优先)
 - 落定后自动持久化位置;页面隐藏时立即落定;不飞行时不占用任何位置控制权
 
-本插件需先安装主插件 `dsh-motion-pet`(≥ 1.0.0,提供 `motion-pet` 与 `motion-pet/client` 服务);
-自带一张**设置卡片**(设置面板里的 "Motion Pet Physics"),所有参数运行时可调、自动落盘。
+本插件需先安装主插件 `petween`(≥ 1.2.0,提供 `petween` 与 `petween/client` 服务;
+1.1.x 及更早的 `dsh-motion-pet` 提供的是旧服务名,不兼容);
+自带一张**设置卡片**(设置面板里的 "Petween Physics"),所有参数运行时可调、自动落盘。
 
 ## 安装
 
-要求：已安装 DSH（`@deepseek-ai/dsh`，在 0.1.0-rc.7 上实测）与主插件 `dsh-motion-pet`。
+要求：已安装 DSH（`@deepseek-ai/dsh`，在 0.1.0-rc.7 上实测）与主插件 `petween`。
 
 ```bash
-dsh plugin --profile web add link:/path/to/dsh-motion-pet-physics
+dsh plugin --profile web add link:/path/to/petween-physics
 ```
 
 重启 `dsh web` 生效。首次加载时，host 半会向主插件的动画库注册默认反弹动画
@@ -27,28 +28,30 @@ dsh plugin --profile web add link:/path/to/dsh-motion-pet-physics
 卸载：
 
 ```bash
-dsh plugin --profile web remove dsh-motion-pet-physics
+dsh plugin --profile web remove petween-physics
 ```
 
 卸载后已注册的动画保留在主插件动画库中，由你在其编辑器里管理。
 
 ## 配置
 
-**全部参数均可在设置卡片中运行时编辑**:打开 DSH 设置面板,找到 "Motion Pet Physics" 卡片
-(紧跟主插件的 "Motion Pet" 卡片之后),按分组调整——物理(重力/弹性/摩擦/甩出倍率/起掷与落定
+**全部参数均可在设置卡片中运行时编辑**:打开 DSH 设置面板,找到 "Petween Physics" 卡片
+(紧跟主插件的 "Petween" 卡片之后),按分组调整——物理(重力/弹性/摩擦/甩出倍率/起掷与落定
 速度/速度上限/飞行兜底)、碰壁动画(开关/动画下拉/打断开关)、碰壁切图(开关/pose 六选一/保持
 时长)、落地滑动(最小反弹高度/地面摩擦/滑动动画下拉),采样/去抖/容差收在"高级"折叠区。
 改动停手 300ms 后自动保存(原子写盘),卡片头部显示保存中/已保存/保存失败状态;"恢复默认"一键
 写回出厂值。
 
-**落盘位置**:`~/.dsh/motion-pet-physics/config.json`(`$DSH_HOME/motion-pet-physics/config.json`,
-重启后生效于新加载)。**手改 JSON 也行**:host 启动时读取该文件——文件不存在用默认值;JSON 损坏
+**落盘位置**:`~/.dsh/petween-physics/config.json`(`$DSH_HOME/petween-physics/config.json`,
+重启后生效于新加载)。从 `dsh-motion-pet-physics` 0.1.x 升级时,首次启动自动把
+`$DSH_HOME/motion-pet-physics/` 迁移为 `$DSH_HOME/petween-physics/`(目录重命名;跨盘/被占用
+导致重命名失败时改为复制并保留旧目录)。**手改 JSON 也行**:host 启动时读取该文件——文件不存在用默认值;JSON 损坏
 则告警并自动重写默认值;字段写错(未知字段/越界值)会按字段回落默认,合法字段保留。
-HTTP 侧(host 半提供):`GET /api/motion-pet-physics/config` 读取,`PUT` 同路径提交部分或完整
+HTTP 侧(host 半提供):`GET /api/petween-physics/config` 读取,`PUT` 同路径提交部分或完整
 config——服务端按 `CONFIG_NUMERIC_FIELDS` 表**校验并拒绝**未知字段与超范围数值(400
 `INVALID_CONFIG`,错误信息带期望范围;不做静默 clamp),跨源写会被 403 拦截。
 
-动画 id 下拉的数据源:主插件 `GET /api/motion-pet/animations` 的自定义动画 + 硬编码的常用
+动画 id 下拉的数据源:主插件 `GET /api/petween/animations` 的自定义动画 + 硬编码的常用
 `builtin:` 内置动画 + 本插件默认 `user:physics-bounce-pop`;主插件不可用时回落静态列表,
 当前配置里手填的未知 id 也会以"当前值"保留显示。
 
@@ -89,11 +92,11 @@ config——服务端按 `CONFIG_NUMERIC_FIELDS` 表**校验并拒绝**未知字
 
 ## 工作原理
 
-- **host 半**(`src/index.ts`):`inject: ['motion-pet', 'webServer']`。`Symbol.for` mount-once
-  旗标防止 bundle 双载重复注册路由;注册 `GET/PUT /api/motion-pet-physics/config`
-  (校验 + 原子写 `$DSH_HOME/motion-pet-physics/config.json`),并在服务出现时注册默认动画
+- **host 半**(`src/index.ts`):`inject: ['petween', 'webServer']`。`Symbol.for` mount-once
+  旗标防止 bundle 双载重复注册路由;注册 `GET/PUT /api/petween-physics/config`
+  (校验 + 原子写 `$DSH_HOME/petween-physics/config.json`),并在服务出现时注册默认动画
   (幂等,一次性)。
-- **client 半**(`src/client/`):`inject: ['motion-pet/client', 'slots']`。
+- **client 半**(`src/client/`):`inject: ['petween/client', 'slots']`。
   - `physics.ts`:纯函数积分器(半隐式欧拉),dt 钳制 ≤40ms,包围盒 = `stageSize × scale`,四壁反弹 ×restitution,贴底低速落定;反弹高度低于 `minBounceHeightPx` 时转地面滑动(vy 归零、贴地、`groundFriction` 衰减、侧壁只夹不弹、不报告碰壁),滑动中速度低于 `settleSpeed` 落定。
   - `throw-controller.ts`:订阅拖拽手势与舞台快照;拖拽期间采样(不持租约),松手时估算释放速度;
     起飞时申请独占位置租约(`requestPositionControl`),rAF 逐帧 `driver.apply`;碰壁触发效果(同壁去抖);

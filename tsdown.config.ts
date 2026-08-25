@@ -1,6 +1,6 @@
 /**
- * tsdown build for dsh-motion-pet-physics — the two-artifact adaptation of
- * the DSH client bundle preset (mirrors the sibling dsh-motion-pet config,
+ * tsdown build for petween-physics — the two-artifact adaptation of
+ * the DSH client bundle preset (mirrors the sibling petween config,
  * which was verified against dsh 0.1.0-rc.7; see that repo's
  * docs/implementation-notes.md §5).
  *
@@ -118,7 +118,7 @@ function clientBundlePurity() {
 }
 
 const lib: UserConfig = {
-  name: 'dsh-motion-pet-physics',
+  name: 'petween-physics',
   entry: ['src/index.ts'],
   outDir: 'lib',
   format: ['esm'],
@@ -135,7 +135,7 @@ const lib: UserConfig = {
 }
 
 const client: UserConfig = {
-  name: 'dsh-motion-pet-physics/client',
+  name: 'petween-physics/client',
   entry: { client: 'src/client/index.ts' },
   outDir: 'lib',
   format: 'cjs',
@@ -152,10 +152,10 @@ const client: UserConfig = {
     alwaysBundle: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
   },
   define: ENV_DEFINES,
-  plugins: [clientBundlePurity(), cssModulesInline('dsh-motion-pet-physics')],
+  plugins: [clientBundlePurity(), cssModulesInline('petween-physics')],
   outputOptions: {
     entryFileNames: 'client.js',
-    banner: `window.__ModuleLoader__.load({ id: "dsh-motion-pet-physics", factory: (require) => {`,
+    banner: `window.__ModuleLoader__.load({ id: "petween-physics", factory: (require) => {`,
     footer: 'return module.exports; } });',
     intro: 'var module = { exports: {} }; var exports = module.exports;',
   },

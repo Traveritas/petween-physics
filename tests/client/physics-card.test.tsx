@@ -97,7 +97,7 @@ describe('PhysicsCard', () => {
   it('renders the groups and current values after load; header shows 已保存', async () => {
     const { hub } = makeHub()
     await render(hub)
-    expect(container.textContent).toContain('Motion Pet Physics')
+    expect(container.textContent).toContain('Petween Physics')
     expect(container.textContent).toContain('物理')
     expect(container.textContent).toContain('碰壁动画')
     expect(container.textContent).toContain('碰壁切图')

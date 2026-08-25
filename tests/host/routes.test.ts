@@ -26,7 +26,7 @@ let disposeRoutes: () => void
 let store: PhysicsConfigStore
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'motion-pet-physics-routes-'))
+  dir = await mkdtemp(join(tmpdir(), 'petween-physics-routes-'))
   store = new PhysicsConfigStore({ configPath: join(dir, 'config.json') })
   const deps: ConfigRoutesDeps = {
     loadConfig: () => store.load(),
@@ -68,7 +68,7 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
-const CONFIG_URL = '/api/motion-pet-physics/config'
+const CONFIG_URL = '/api/petween-physics/config'
 
 const put = (body: unknown, headers: Record<string, string> = {}): Promise<Response> =>
   fetch(`${base}${CONFIG_URL}`, {
@@ -77,7 +77,7 @@ const put = (body: unknown, headers: Record<string, string> = {}): Promise<Respo
     body: typeof body === 'string' ? body : JSON.stringify(body),
   })
 
-describe('GET /api/motion-pet-physics/config', () => {
+describe('GET /api/petween-physics/config', () => {
   it('returns defaults when no file exists on disk', async () => {
     const res = await fetch(`${base}${CONFIG_URL}`)
     expect(res.status).toBe(200)
@@ -100,7 +100,7 @@ describe('GET /api/motion-pet-physics/config', () => {
   })
 })
 
-describe('PUT /api/motion-pet-physics/config', () => {
+describe('PUT /api/petween-physics/config', () => {
   it('accepts a full card draft — every field of every section, slide fields included', async () => {
     // The settings card PUTs complete drafts. This round-trip locks the
     // card↔validator shape agreement: a field the card can send but the

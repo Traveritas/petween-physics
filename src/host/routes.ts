@@ -1,6 +1,6 @@
 /**
  * host/routes.ts — the one HTTP endpoint this companion serves:
- * GET/PUT `/api/motion-pet-physics/config` on the bare node:http the DSH
+ * GET/PUT `/api/petween-physics/config` on the bare node:http the DSH
  * webServer service exposes (same hand-rolled method dispatch / body parsing
  * / error mapping pattern as the main plugin's host/routes.ts, M0 finding §6
  * there — copied semantics, independent code).
@@ -18,7 +18,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { ThrowPhysicsPluginConfig } from '../client/config'
 import { ConfigValidationError } from './config'
 
-const CONFIG_PATH = '/api/motion-pet-physics/config'
+const CONFIG_PATH = '/api/petween-physics/config'
 /** 16 fields of small numbers; 16 KiB is orders of magnitude beyond need. */
 const JSON_BODY_LIMIT = 16 * 1024
 

@@ -1,5 +1,5 @@
 /**
- * throw-controller.test.ts — the orchestrator over a fake motion-pet
+ * throw-controller.test.ts — the orchestrator over a fake petween
  * service, with a manual clock and a manual frame pump.
  *
  * What is pinned here:
@@ -19,7 +19,7 @@ import {
   type ThrowPhysicsPluginConfig,
 } from '../../src/client/config'
 import { ThrowController, type ThrowControllerDeps } from '../../src/client/throw-controller'
-import type { MotionPetClientService, PositionDriver, StageSnapshot } from '../../src/client/types'
+import type { PetweenClientService, PositionDriver, StageSnapshot } from '../../src/client/types'
 
 class FakeDriver implements PositionDriver {
   readonly applyCalls: Array<{ x: number; y: number }> = []
@@ -76,7 +76,7 @@ class FakeService {
   private stageSubscriptions = 0
   private dragSubscriptions = 0
 
-  readonly service: MotionPetClientService = {
+  readonly service: PetweenClientService = {
     version: 1,
     getStageSnapshot: () => this.snapshot,
     subscribeStage: (listener) => {
@@ -504,7 +504,7 @@ describe('settle commit/release contract (M5a)', () => {
     await flushMicrotasks()
     expect(driver.commits).toBe(1)
     expect(driver.releases).toBe(1) // the lease is never stranded on a failed commit
-    expect(consoleWarn).toHaveBeenCalledWith('motion-pet-physics: settle commit failed', expect.any(Error))
+    expect(consoleWarn).toHaveBeenCalledWith('petween-physics: settle commit failed', expect.any(Error))
   })
 })
 

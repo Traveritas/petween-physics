@@ -1,10 +1,10 @@
 /**
- * client/types.ts — self-contained mirror of the dsh-motion-pet client
- * service contract (`motion-pet/client`, service version 1).
+ * client/types.ts — self-contained mirror of the petween client
+ * service contract (`petween/client`, service version 1).
  *
  * WHY a local mirror: this companion is an independent package and must not
  * import the main plugin's runtime code. The shapes below mirror
- * dsh-motion-pet@1.0.0 src/client/extension-service.ts; the entry file
+ * petween@1.0.0 src/client/extension-service.ts; the entry file
  * fetches the service with a runtime cast instead of global Context
  * augmentation, so the mirror can never drift into a load-time dependency.
  *
@@ -46,8 +46,8 @@ export interface PositionDriver {
   onUserDrag(listener: () => void): () => void
 }
 
-/** Mirror of the `motion-pet/client` service. */
-export interface MotionPetClientService {
+/** Mirror of the `petween/client` service. */
+export interface PetweenClientService {
   readonly version: 1
   getStageSnapshot(): StageSnapshot | null
   /** Subscribing pushes the current value immediately; null = no session. */
@@ -72,8 +72,8 @@ export interface MotionPetClientService {
  * Fetch the injected service off a cordis context without declaring global
  * module augmentation. Returns null when absent or version-incompatible.
  */
-export function motionPetClientServiceOf(ctx: object): MotionPetClientService | null {
-  const service = (ctx as { 'motion-pet/client'?: MotionPetClientService })['motion-pet/client']
+export function petweenClientServiceOf(ctx: object): PetweenClientService | null {
+  const service = (ctx as { 'petween/client'?: PetweenClientService })['petween/client']
   if (service === undefined || service.version !== 1) return null
   return service
 }

@@ -20,7 +20,7 @@
  */
 import type { ThrowPhysicsPluginConfig } from './config'
 import { releaseVelocity, stepBall, type BallState, type ViewportBounds, type Wall } from './physics'
-import type { MotionPetClientService, PositionDriver, StageSnapshot } from './types'
+import type { PetweenClientService, PositionDriver, StageSnapshot } from './types'
 
 /** One drag-velocity sample (stage top-left at time t). */
 interface DragSample {
@@ -43,7 +43,7 @@ interface Flight {
 
 /** All environment touchpoints, injectable for tests. */
 export interface ThrowControllerDeps {
-  service: MotionPetClientService
+  service: PetweenClientService
   /**
    * Read the LATEST configuration at use time (per gesture, per frame) — the
    * settings card edits it at runtime. Object identity need not be stable
@@ -261,7 +261,7 @@ export class ThrowController {
       void flight.driver
         .commit()
         .catch((error: unknown) => {
-          console.warn('motion-pet-physics: settle commit failed', error)
+          console.warn('petween-physics: settle commit failed', error)
         })
         // Release strictly after the commit lands: releasing first would let
         // a remote overlay coordinate overwrite the settled position.

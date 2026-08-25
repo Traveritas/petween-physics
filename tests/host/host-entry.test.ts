@@ -2,7 +2,7 @@
  * host-entry.test.ts — the host half's jobs: install the factory-default
  * bounce animation exactly once (only when the library does not already hold
  * it — the user's customized version outranks our default), and register the
- * /api/motion-pet-physics/config route exactly once per in-process mount
+ * /api/petween-physics/config route exactly once per in-process mount
  * (the Symbol.for mount-once flag guards against bundle-patch + standalone
  * double loads; the flag clears on dispose so reloads work).
  *
@@ -10,7 +10,10 @@
  * (verified on the real machine during install); here we pin the wiring and
  * the documented invariants the definition itself must satisfy.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { apply } from '../../src/index'
 import {
@@ -18,12 +21,24 @@ import {
   BOUNCE_POP_ANIMATION_ID,
   ensureBounceAnimation,
 } from '../../src/host/bounce-animation'
-import type { AnimationDefinitionMirror, MotionPetHostService } from '../../src/host/types'
+import type { AnimationDefinitionMirror, PetweenHostService } from '../../src/host/types'
 
-const makeService = (): { service: MotionPetHostService; registered: AnimationDefinitionMirror[] } => {
+// apply() runs the one-time config-dir migration (host/migrate.ts) against
+// dshHomePath() before the store exists. Point $DSH_HOME at a throwaway
+// tmpdir so these tests can never touch real user data. dshHomePath reads
+// the env on every call, so the per-file override sticks.
+const PREVIOUS_DSH_HOME = process.env.DSH_HOME
+process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'petween-physics-entry-'))
+afterAll(() => {
+  rmSync(process.env.DSH_HOME!, { recursive: true, force: true })
+  if (PREVIOUS_DSH_HOME === undefined) delete process.env.DSH_HOME
+  else process.env.DSH_HOME = PREVIOUS_DSH_HOME
+})
+
+const makeService = (): { service: PetweenHostService; registered: AnimationDefinitionMirror[] } => {
   const existing = new Set<string>()
   const registered: AnimationDefinitionMirror[] = []
-  const service: MotionPetHostService = {
+  const service: PetweenHostService = {
     version: 1,
     hasAnimation: async (id) => existing.has(id),
     registerAnimation: async (definition) => {
@@ -90,7 +105,7 @@ describe('ensureBounceAnimation', () => {
   })
 
   it('propagates registration failures to the caller (apply decides severity)', async () => {
-    const failing: MotionPetHostService = {
+    const failing: PetweenHostService = {
       version: 1,
       hasAnimation: async () => false,
       registerAnimation: async () => {
@@ -144,22 +159,42 @@ describe('host entry apply()', () => {
   it('registers the default animation and the config route through the injected services', async () => {
     const { service, registered } = makeService()
     const host = makeHost()
-    const dispose = apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
+    const dispose = apply({ ...host.ctx, 'petween': service } as unknown as Context)
     await flush()
     expect(registered).toHaveLength(1)
     expect(registered[0]!.id).toBe(BOUNCE_POP_ANIMATION_ID)
-    expect(host.registeredPaths).toEqual(['exact /api/motion-pet-physics/config'])
+    expect(host.registeredPaths).toEqual(['exact /api/petween-physics/config'])
     expect(host.effectDisposers).toHaveLength(1)
     dispose?.()
+  })
+
+  it('migrates a legacy motion-pet-physics config dir onto petween-physics before the store loads', async () => {
+    const legacy = join(process.env.DSH_HOME!, 'motion-pet-physics')
+    const target = join(process.env.DSH_HOME!, 'petween-physics')
+    mkdirSync(legacy, { recursive: true })
+    writeFileSync(join(legacy, 'config.json'), JSON.stringify({ physics: { gravity: 1337 } }))
+
+    const { service, registered } = makeService()
+    const host = makeHost()
+    const dispose = apply({ ...host.ctx, 'petween': service } as unknown as Context)
+    await flush()
+    // Entry-level guarantee: the rename happened and content survived, so
+    // PhysicsConfigStore (built after the migration) reads the real config.
+    expect(existsSync(legacy)).toBe(false)
+    expect(readFileSync(join(target, 'config.json'), 'utf8')).toBe(JSON.stringify({ physics: { gravity: 1337 } }))
+    expect(registered).toHaveLength(1) // the rest of apply() ran as usual
+    dispose?.()
+    // Keep the isolated home clean for the tests that follow.
+    rmSync(target, { recursive: true, force: true })
   })
 
   it('does not overwrite when the library already holds the id', async () => {
     const { service, registered } = makeService()
     const host = makeHost()
-    apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
+    apply({ ...host.ctx, 'petween': service } as unknown as Context)
     await flush()
     expect(registered).toHaveLength(1)
-    apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
+    apply({ ...host.ctx, 'petween': service } as unknown as Context)
     await flush()
     expect(registered).toHaveLength(1)
     host.effectDisposers[0]!()
@@ -172,7 +207,7 @@ describe('host entry apply()', () => {
       apply(host.ctx as unknown as Context)
       apply({
         ...host.ctx,
-        'motion-pet': { version: 2 as unknown as 1 } as unknown as MotionPetHostService,
+        'petween': { version: 2 as unknown as 1 } as unknown as PetweenHostService,
       } as unknown as Context)
       await flush()
       expect(warn).toHaveBeenCalledTimes(2)
@@ -185,7 +220,7 @@ describe('host entry apply()', () => {
   it('warns instead of crashing when registration rejects', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
-      const failing: MotionPetHostService = {
+      const failing: PetweenHostService = {
         version: 1,
         hasAnimation: async () => false,
         registerAnimation: async () => {
@@ -194,12 +229,12 @@ describe('host entry apply()', () => {
       }
       const host = makeHost()
       expect(() =>
-        apply({ ...host.ctx, 'motion-pet': failing } as unknown as Context),
+        apply({ ...host.ctx, 'petween': failing } as unknown as Context),
       ).not.toThrow()
       await flush()
       expect(warn).toHaveBeenCalledTimes(1)
       // The config route still registered — the animation is optional eye candy.
-      expect(host.registeredPaths).toEqual(['exact /api/motion-pet-physics/config'])
+      expect(host.registeredPaths).toEqual(['exact /api/petween-physics/config'])
       host.effectDisposers[0]!()
     } finally {
       warn.mockRestore()
@@ -210,12 +245,12 @@ describe('host entry apply()', () => {
     // The Symbol.for flag is process-global — clean it before AND after so
     // this test neither sees nor leaves stale state for other tests.
     const registry = globalThis as unknown as Record<symbol, true | undefined>
-    const FLAG = Symbol.for('dsh-motion-pet-physics/host')
+    const FLAG = Symbol.for('petween-physics/host')
     registry[FLAG] = undefined
     try {
       const { service, registered } = makeService()
       const host = makeHost()
-      const dispose = apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
+      const dispose = apply({ ...host.ctx, 'petween': service } as unknown as Context)
       await flush()
       expect(registered).toHaveLength(1)
       expect(host.registeredPaths).toHaveLength(1)
@@ -223,7 +258,7 @@ describe('host entry apply()', () => {
       // Second load (bundle patch + standalone install double-load): the
       // flag short-circuits BEFORE any registration, so no duplicate route
       // (the real webServer would throw) and no second animation attempt.
-      apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
+      apply({ ...host.ctx, 'petween': service } as unknown as Context)
       await flush()
       expect(registered).toHaveLength(1)
       expect(host.registeredPaths).toHaveLength(1)
@@ -231,9 +266,9 @@ describe('host entry apply()', () => {
       // Dispose clears the flag: a reload registers again.
       dispose?.()
       expect(host.registeredPaths).toHaveLength(0)
-      apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
+      apply({ ...host.ctx, 'petween': service } as unknown as Context)
       await flush()
-      expect(host.registeredPaths).toEqual(['exact /api/motion-pet-physics/config'])
+      expect(host.registeredPaths).toEqual(['exact /api/petween-physics/config'])
       host.effectDisposers.at(-1)!()
     } finally {
       registry[FLAG] = undefined

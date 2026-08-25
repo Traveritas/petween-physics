@@ -1,11 +1,11 @@
 /**
- * dsh-motion-pet-physics browser half — two surfaces over one config:
+ * petween-physics browser half — two surfaces over one config:
  * 1. the ThrowController (the plugin's whole runtime behavior): fetch the
- *    main plugin's `motion-pet/client` service off the cordis context, bind
+ *    main plugin's `petween/client` service off the cordis context, bind
  *    it to the browser environment, read the LATEST config from the hub at
  *    use time (per gesture / per frame);
  * 2. the settings.section card that edits the config at runtime (the host
- *    half's /api/motion-pet-physics/config persists it).
+ *    half's /api/petween-physics/config persists it).
  *
  * `inject` makes cordis load this entry only while the main plugin's service
  * and the shell's slot registry exist.
@@ -17,16 +17,16 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { physicsConfigHub } from './config-hub'
 import { PhysicsCard } from './settings/PhysicsCard'
 import { ThrowController } from './throw-controller'
-import { motionPetClientServiceOf } from './types'
+import { petweenClientServiceOf } from './types'
 
-export const inject = ['motion-pet/client', 'slots']
+export const inject = ['petween/client', 'slots']
 
 export function apply(ctx: ClientContext) {
-  const service = motionPetClientServiceOf(ctx)
+  const service = petweenClientServiceOf(ctx)
   if (service === null) {
     // inject guarantees presence; a miss means a broken/unknown service
     // version. Stay loaded-but-idle rather than throwing every boot.
-    console.warn('motion-pet-physics: motion-pet/client service missing or unsupported')
+    console.warn('petween-physics: petween/client service missing or unsupported')
     return
   }
   // One memoized GET serves the controller AND the card; until it lands (or
@@ -58,7 +58,7 @@ export function apply(ctx: ClientContext) {
   // 135 lands right after it.
   const disposeCard = ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
-      { name: 'settings.section', id: 'motion-pet-physics', order: 135, label: 'Motion Pet Physics' },
+      { name: 'settings.section', id: 'petween-physics', order: 135, label: 'Petween Physics' },
       PhysicsCard,
     ),
   )

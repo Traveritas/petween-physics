@@ -1,9 +1,14 @@
 {
-  "name": "dsh-motion-pet-physics",
-  "version": "0.1.0",
-  "description": "Throw-physics companion plugin for dsh-motion-pet — fling the pet, gravity + wall bounces, configurable impact effects",
+  "name": "petween-physics",
+  "version": "0.2.0",
+  "description": "Throw-physics companion plugin for Petween — fling the pet, gravity + wall bounces, configurable impact effects",
   "license": "MIT",
   "packageManager": "pnpm@10.34.5",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Traveritas/petween-physics.git"
+  },
+  "homepage": "https://github.com/Traveritas/petween-physics",
   "keywords": [
     "dsh",
     "deepseek-harness",

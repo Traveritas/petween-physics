@@ -3,8 +3,8 @@
  *
  * History: these started as compile-time constants (no cordis Config schema —
  * see the "no schema form" note below). They are now RUNTIME state: the host
- * half persists them at `$DSH_HOME/motion-pet-physics/config.json` and serves
- * GET/PUT `/api/motion-pet-physics/config`; this module stays the single
+ * half persists them at `$DSH_HOME/petween-physics/config.json` and serves
+ * GET/PUT `/api/petween-physics/config`; this module stays the single
  * source of truth for the shape, the defaults AND the accepted ranges — the
  * host's PUT validation rejects out-of-range values using CONFIG_NUMERIC_FIELDS,
  * and the settings card binds the same bounds to its inputs.

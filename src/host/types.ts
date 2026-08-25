@@ -1,11 +1,11 @@
 /**
- * host/types.ts — self-contained mirrors of the dsh-motion-pet host service
- * contract (`motion-pet`, service version 1).
+ * host/types.ts — self-contained mirrors of the petween host service
+ * contract (`petween`, service version 1).
  *
  * WHY a local mirror: this companion is an independent package and must not
  * import the main plugin's runtime code (single-source-of-truth duplication
  * is the accepted cost; the contract is versioned and additive). The shapes
- * below mirror dsh-motion-pet@1.0.0 src/host/service.ts and the
+ * below mirror petween@1.0.0 src/host/service.ts and the
  * AnimationDefinition data model from its src/motion/animation-definition.ts
  * (documented for users in its docs/motion-format.md).
  *
@@ -47,8 +47,8 @@ export interface AnimationDefinitionMirror {
   parameters?: { strength?: { default: number; min: number; max: number } }
 }
 
-/** Mirror of the `motion-pet` host service (dsh-motion-pet src/host/service.ts). */
-export interface MotionPetHostService {
+/** Mirror of the `petween` host service (petween src/host/service.ts). */
+export interface PetweenHostService {
   readonly version: 1
   /**
    * Validate and persist a definition into the shared animation library.

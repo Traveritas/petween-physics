@@ -1,6 +1,6 @@
-# Plugin patch layer: insert the motion-pet-physics companion entry into the
+# Plugin patch layer: insert the petween-physics companion entry into the
 # profile's cordis tree. `dsh plugin add` picks this file up via the
 # package.json `dsh.bundle.patch` field.
 - insert:
-    - id: motion-pet-physics
-      name: 'dsh-motion-pet-physics'
+    - id: petween-physics
+      name: 'petween-physics'

@@ -6,15 +6,15 @@
  * `NETWORK`/`HTTP_*`.
  *
  * Endpoints:
- * - GET /api/motion-pet-physics/config → { config }        (this plugin's host)
- * - PUT /api/motion-pet-physics/config → { config } | 400 INVALID_CONFIG
- * - GET /api/motion-pet/animations     → { customs, warnings } (main plugin,
+ * - GET /api/petween-physics/config → { config }        (this plugin's host)
+ * - PUT /api/petween-physics/config → { config } | 400 INVALID_CONFIG
+ * - GET /api/petween/animations     → { customs, warnings } (main plugin,
  *   read-only; failures degrade to the hardcoded builtin list)
  */
 import type { PhysicsConfigPatch, ThrowPhysicsPluginConfig } from './config'
 
-const CONFIG_URL = '/api/motion-pet-physics/config'
-const MOTION_PET_ANIMATIONS_URL = '/api/motion-pet/animations'
+const CONFIG_URL = '/api/petween-physics/config'
+const PETWEEN_ANIMATIONS_URL = '/api/petween/animations'
 
 export class ApiError extends Error {
   override readonly name = 'ApiError'
@@ -91,6 +91,6 @@ export interface AnimationOption {
  * impact-animation dropdown). A failure (main plugin absent/old) is the
  * CALLER's signal to fall back to the builtin list — never a card crash.
  */
-export function getMotionPetAnimations(): Promise<{ customs: AnimationOption[]; warnings: string[] }> {
-  return request(MOTION_PET_ANIMATIONS_URL)
+export function getPetweenAnimations(): Promise<{ customs: AnimationOption[]; warnings: string[] }> {
+  return request(PETWEEN_ANIMATIONS_URL)
 }

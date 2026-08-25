@@ -27,7 +27,7 @@ import {
 import { writeJsonAtomic } from './storage'
 
 export function defaultConfigPath(): string {
-  return dshHomePath('motion-pet-physics', 'config.json')
+  return dshHomePath('petween-physics', 'config.json')
 }
 
 /** One field-level problem; `path` is a dotted config path ('' = the root). */
@@ -199,7 +199,7 @@ export function repairConfig(raw: unknown): ThrowPhysicsPluginConfig {
 }
 
 export interface PhysicsConfigStoreOptions {
-  /** Defaults to `$DSH_HOME/motion-pet-physics/config.json`. */
+  /** Defaults to `$DSH_HOME/petween-physics/config.json`. */
   configPath?: string
 }
 
@@ -229,7 +229,7 @@ export class PhysicsConfigStore {
     try {
       raw = JSON.parse(text)
     } catch (error) {
-      console.warn('motion-pet-physics: config.json is corrupt — restoring defaults', error)
+      console.warn('petween-physics: config.json is corrupt — restoring defaults', error)
       const config = structuredClone(DEFAULT_CONFIG)
       await this.save(config)
       return config
