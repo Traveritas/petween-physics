@@ -4,16 +4,21 @@
  * which was verified against dsh 0.1.0-rc.7; see that repo's
  * docs/implementation-notes.md §5).
  *
- * Two artifacts (no preview / no editor: this companion renders no UI):
+ * Two artifacts:
  * - lib/index.js   host half (ESM, node; @deepseek-ai/* stay external and
  *                  resolve from the dsh profile tree at runtime)
  * - lib/client.js  browser half (CJS factory wrapped in the
  *                  `window.__ModuleLoader__.load({id, factory})` handoff the
  *                  shell expects; externals limited to the shell module table)
  *
- * CSS Modules inline plugin omitted: this plugin's client half owns no CSS.
+ * The client half now renders the settings.section card, so the CSS Modules
+ * inline plugin is on (same as the main plugin): importing `x.module.css`
+ * yields the hashed class map and injects one <style data-plugin-css> tag.
  */
+import { readFile } from 'node:fs/promises'
+import { basename, dirname, resolve as resolvePath } from 'node:path'
 import type { UserConfig } from 'tsdown'
+import { transform } from 'lightningcss'
 
 /** The module specifiers the shell shares into the frozen module table. */
 const PLATFORM_MODULES = [
@@ -40,6 +45,55 @@ const ENV_DEFINES: Record<string, string> = {
   'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
   'import.meta.env.MODE': JSON.stringify(process.env.NODE_ENV ?? 'production'),
   'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
+}
+
+const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
+const CSS_VIRTUAL_SUFFIX = '.mjs'
+
+/**
+ * CSS Modules inside the bundle (main-plugin pattern): importing
+ * `x.module.css` yields the hashed class map (lightningcss
+ * `[hash]_[local]`), and the css text injects one `<style data-plugin-css>`
+ * tag at factory execution. tsdown's own css pipeline is sidestepped with a
+ * virtual id that does not end in `.css`.
+ */
+function cssModulesInline(pluginId: string) {
+  return {
+    name: 'dsh-css-modules-inline',
+    resolveId(source: string, importer: string | undefined) {
+      if (!source.endsWith('.module.css')) return null
+      const abs = importer !== undefined ? resolvePath(dirname(importer), source) : source
+      return CSS_VIRTUAL_PREFIX + abs + CSS_VIRTUAL_SUFFIX
+    },
+    async load(virtualId: string) {
+      if (!virtualId.startsWith(CSS_VIRTUAL_PREFIX)) return null
+      const physical = virtualId.slice(CSS_VIRTUAL_PREFIX.length, -CSS_VIRTUAL_SUFFIX.length)
+      this.addWatchFile(physical)
+      const source = await readFile(physical)
+      const { code, exports: cssExports } = transform({
+        filename: basename(physical),
+        code: source,
+        cssModules: { pattern: '[hash]_[local]' },
+        minify: true,
+      })
+      const classMap: Record<string, string> = {}
+      for (const [local, exp] of Object.entries(cssExports ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+        classMap[local] = exp.name
+      }
+      return [
+        `const css = ${JSON.stringify(code.toString())};`,
+        `const tagId = ${JSON.stringify(`${pluginId}/${basename(physical)}`)};`,
+        `if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']') === null) {`,
+        `  const tag = document.createElement('style');`,
+        `  tag.dataset.plugin = ${JSON.stringify(pluginId)};`,
+        `  tag.dataset.pluginCss = tagId;`,
+        `  tag.textContent = css;`,
+        `  document.head.appendChild(tag);`,
+        `}`,
+        `export default ${JSON.stringify(classMap)};`,
+      ].join('\n')
+    },
+  }
 }
 
 /**
@@ -98,7 +152,7 @@ const client: UserConfig = {
     alwaysBundle: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
   },
   define: ENV_DEFINES,
-  plugins: [clientBundlePurity()],
+  plugins: [clientBundlePurity(), cssModulesInline('dsh-motion-pet-physics')],
   outputOptions: {
     entryFileNames: 'client.js',
     banner: `window.__ModuleLoader__.load({ id: "dsh-motion-pet-physics", factory: (require) => {`,

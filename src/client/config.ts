@@ -1,12 +1,20 @@
 /**
- * client/config.ts — the plugin's tunable constants.
+ * client/config.ts — the plugin's tunable configuration.
  *
- * WHY a plain constant (no cordis Config schema): investigated against the
- * installed dsh 0.1.0-rc.7 sources —
+ * History: these started as compile-time constants (no cordis Config schema —
+ * see the "no schema form" note below). They are now RUNTIME state: the host
+ * half persists them at `$DSH_HOME/motion-pet-physics/config.json` and serves
+ * GET/PUT `/api/motion-pet-physics/config`; this module stays the single
+ * source of truth for the shape, the defaults AND the accepted ranges — the
+ * host's PUT validation rejects out-of-range values using CONFIG_NUMERIC_FIELDS,
+ * and the settings card binds the same bounds to its inputs.
+ *
+ * Why still no cordis Config schema (investigated against dsh 0.1.0-rc.7):
  * 1. The Plugins settings tab renders ONLY hand-written cards that a
- *    plugin's own browser half registers under `settings.plugin.item`
- *    (dsh-client-ui-settings-plugins/README.md: "A served namespace no card
- *    claims renders nothing"); no surface renders a plugin's `Config`
+ *    plugin's own browser half registers under `settings.plugin.item`, keyed
+ *    on a settings namespace the HOST serves through the settings-scope
+ *    system (dsh-client-ui-settings-plugins/README.md: "A served namespace no
+ *    card claims renders nothing"); no surface renders a plugin's `Config`
  *    export as a form.
  * 2. The installed shell's frozen module table exposes only
  *    react/cordis/slots/primitives (dsh-web-frontend dist, staticModules
@@ -14,8 +22,8 @@
  * 3. Browser-side plugin entries are created without entry config
  *    (`loader.create({ name })` in the shell boot), so a client half has no
  *    config channel to read even off-UI.
- * Until DSH ships a generic plugin-config form, editing this file and
- * rebuilding is the supported path (see README "Configuration").
+ * Our own config.json + HTTP route + settings.section card replaces all of
+ * that with one owned path (see README "Configuration").
  */
 
 /** Pure-physics tuning (px/second units; positions are viewport px). */
@@ -66,6 +74,58 @@ export interface ThrowPhysicsPluginConfig {
   /** Consecutive driver.apply() rejections tolerated before aborting a flight. */
   applyFalseTolerance: number
 }
+
+/**
+ * A partial config for PUT: every level optional (the host merges present
+ * fields onto the current on-disk config). The settings card sends complete
+ * drafts; hand-rolled callers may patch single fields.
+ */
+export interface PhysicsConfigPatch {
+  physics?: Partial<PhysicsConfig>
+  bounceAnimation?: Partial<BounceAnimationConfig>
+  flashPose?: Partial<FlashPoseConfig>
+  sampleWindowMs?: number
+  effectDebounceMs?: number
+  applyFalseTolerance?: number
+}
+
+/** The six pose slots the main plugin's resolver knows (flashPose.poseKey). */
+export const POSE_KEYS = ['idle', 'thinking', 'working', 'waiting', 'success', 'error'] as const
+export type PoseKeyOption = (typeof POSE_KEYS)[number]
+
+/** Range spec for one numeric config field (host validation + card bounds). */
+export interface NumericFieldSpec {
+  readonly min: number
+  readonly max: number
+  /** Set when only whole numbers make sense (e.g. frame tolerances). */
+  readonly integer?: boolean
+}
+
+const NUMERIC_FIELDS_SOURCE = {
+  'physics.gravity': { min: 100, max: 100_000 },
+  'physics.restitution': { min: 0, max: 1 },
+  'physics.friction': { min: 0, max: 1 },
+  'physics.throwMultiplier': { min: 0, max: 10 },
+  'physics.minThrowSpeed': { min: 0, max: 10_000 },
+  'physics.settleSpeed': { min: 0, max: 10_000 },
+  'physics.maxSpeed': { min: 100, max: 100_000 },
+  'physics.maxFlightMs': { min: 500, max: 600_000 },
+  'flashPose.holdMs': { min: 0, max: 60_000 },
+  sampleWindowMs: { min: 10, max: 2_000 },
+  effectDebounceMs: { min: 0, max: 5_000 },
+  applyFalseTolerance: { min: 1, max: 60, integer: true },
+}
+
+/**
+ * Accepted numeric ranges, keyed by config path. Enforced by the host's PUT
+ * validation (out-of-range → 400 with the expected range in the message) and
+ * mirrored by the settings card's input bounds — one table for both halves.
+ */
+export type NumericConfigField = keyof typeof NUMERIC_FIELDS_SOURCE
+export const CONFIG_NUMERIC_FIELDS: Record<NumericConfigField, NumericFieldSpec> = NUMERIC_FIELDS_SOURCE
+
+/** Max length for `bounceAnimation.id` (a library id, not free prose). */
+export const ANIMATION_ID_MAX_LENGTH = 200
 
 export const DEFAULT_CONFIG: ThrowPhysicsPluginConfig = {
   physics: {

@@ -1,7 +1,10 @@
 /**
- * host-entry.test.ts — the host half's one job: install the factory-default
- * bounce animation exactly once, and only when the library does not already
- * hold it (the user's customized version outranks our default).
+ * host-entry.test.ts — the host half's jobs: install the factory-default
+ * bounce animation exactly once (only when the library does not already hold
+ * it — the user's customized version outranks our default), and register the
+ * /api/motion-pet-physics/config route exactly once per in-process mount
+ * (the Symbol.for mount-once flag guards against bundle-patch + standalone
+ * double loads; the flag clears on dispose so reloads work).
  *
  * The real schema validation lives in the main plugin's registerAnimation
  * (verified on the real machine during install); here we pin the wiring and
@@ -33,6 +36,43 @@ const makeService = (): { service: MotionPetHostService; registered: AnimationDe
 
 /** Flush the fire-and-forget registration chain kicked off by apply(). */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+/**
+ * Fake host context: a webServer registry that records (and would reject)
+ * duplicate route registrations, plus a synchronous ctx.effect that hands
+ * back the callback's disposer — the two things apply() touches.
+ */
+interface FakeHost {
+  ctx: Context
+  registeredPaths: string[]
+  effectDisposers: Array<() => void>
+}
+
+const makeHost = (): FakeHost => {
+  const registeredPaths: string[] = []
+  const effectDisposers: Array<() => void> = []
+  const ctx = {
+    webServer: {
+      register: (route: { kind: string; path: string }) => {
+        // Mirror the real webServer: a duplicate (kind, path) throws.
+        if (registeredPaths.includes(`${route.kind} ${route.path}`)) {
+          throw new Error(`duplicate route registration: ${route.kind} ${route.path}`)
+        }
+        registeredPaths.push(`${route.kind} ${route.path}`)
+        return () => {
+          const index = registeredPaths.indexOf(`${route.kind} ${route.path}`)
+          if (index >= 0) registeredPaths.splice(index, 1)
+        }
+      },
+    },
+    effect: (setup: () => () => void) => {
+      const dispose = setup()
+      effectDisposers.push(dispose)
+      return dispose
+    },
+  } as unknown as Context
+  return { ctx, registeredPaths, effectDisposers }
+}
 
 describe('ensureBounceAnimation', () => {
   it('registers the default when the library does not hold it', async () => {
@@ -101,31 +141,42 @@ describe('BOUNCE_POP_ANIMATION — documented schema invariants', () => {
 })
 
 describe('host entry apply()', () => {
-  it('registers the default through the injected service', async () => {
+  it('registers the default animation and the config route through the injected services', async () => {
     const { service, registered } = makeService()
-    apply({ 'motion-pet': service } as unknown as Context)
+    const host = makeHost()
+    const dispose = apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
     await flush()
     expect(registered).toHaveLength(1)
     expect(registered[0]!.id).toBe(BOUNCE_POP_ANIMATION_ID)
+    expect(host.registeredPaths).toEqual(['exact /api/motion-pet-physics/config'])
+    expect(host.effectDisposers).toHaveLength(1)
+    dispose?.()
   })
 
   it('does not overwrite when the library already holds the id', async () => {
     const { service, registered } = makeService()
-    apply({ 'motion-pet': service } as unknown as Context)
+    const host = makeHost()
+    apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
     await flush()
     expect(registered).toHaveLength(1)
-    apply({ 'motion-pet': service } as unknown as Context)
+    apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
     await flush()
     expect(registered).toHaveLength(1)
+    host.effectDisposers[0]!()
   })
 
   it('stays idle (warns, no throw) when the service is missing or unsupported', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
-      apply({} as unknown as Context)
-      apply({ 'motion-pet': { version: 2 as unknown as 1 } as unknown as MotionPetHostService } as unknown as Context)
+      const host = makeHost()
+      apply(host.ctx as unknown as Context)
+      apply({
+        ...host.ctx,
+        'motion-pet': { version: 2 as unknown as 1 } as unknown as MotionPetHostService,
+      } as unknown as Context)
       await flush()
       expect(warn).toHaveBeenCalledTimes(2)
+      expect(host.registeredPaths).toEqual([]) // no route without a usable service
     } finally {
       warn.mockRestore()
     }
@@ -141,11 +192,51 @@ describe('host entry apply()', () => {
           throw new Error('INVALID_DEFINITION')
         },
       }
-      expect(() => apply({ 'motion-pet': failing } as unknown as Context)).not.toThrow()
+      const host = makeHost()
+      expect(() =>
+        apply({ ...host.ctx, 'motion-pet': failing } as unknown as Context),
+      ).not.toThrow()
       await flush()
       expect(warn).toHaveBeenCalledTimes(1)
+      // The config route still registered — the animation is optional eye candy.
+      expect(host.registeredPaths).toEqual(['exact /api/motion-pet-physics/config'])
+      host.effectDisposers[0]!()
     } finally {
       warn.mockRestore()
+    }
+  })
+
+  it('mount-once: a second in-process apply registers nothing; dispose re-arms', async () => {
+    // The Symbol.for flag is process-global — clean it before AND after so
+    // this test neither sees nor leaves stale state for other tests.
+    const registry = globalThis as unknown as Record<symbol, true | undefined>
+    const FLAG = Symbol.for('dsh-motion-pet-physics/host')
+    registry[FLAG] = undefined
+    try {
+      const { service, registered } = makeService()
+      const host = makeHost()
+      const dispose = apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
+      await flush()
+      expect(registered).toHaveLength(1)
+      expect(host.registeredPaths).toHaveLength(1)
+
+      // Second load (bundle patch + standalone install double-load): the
+      // flag short-circuits BEFORE any registration, so no duplicate route
+      // (the real webServer would throw) and no second animation attempt.
+      apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
+      await flush()
+      expect(registered).toHaveLength(1)
+      expect(host.registeredPaths).toHaveLength(1)
+
+      // Dispose clears the flag: a reload registers again.
+      dispose?.()
+      expect(host.registeredPaths).toHaveLength(0)
+      apply({ ...host.ctx, 'motion-pet': service } as unknown as Context)
+      await flush()
+      expect(host.registeredPaths).toEqual(['exact /api/motion-pet-physics/config'])
+      host.effectDisposers.at(-1)!()
+    } finally {
+      registry[FLAG] = undefined
     }
   })
 })

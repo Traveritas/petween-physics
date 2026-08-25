@@ -121,6 +121,8 @@ interface Harness {
   controller: ThrowController
   clock: { value: number }
   hidden: { value: boolean }
+  /** Swap the live config (simulates a settings-card save landing). */
+  setConfig: (next: ThrowPhysicsPluginConfig) => void
   pumpFrames: (times?: number) => void
 }
 
@@ -162,7 +164,7 @@ interface HarnessOverrides {
 
 const makeHarness = (configOverrides: HarnessOverrides = {}): Harness => {
   const service = new FakeService()
-  const config: ThrowPhysicsPluginConfig = {
+  let config: ThrowPhysicsPluginConfig = {
     ...structuredClone(DEFAULT_CONFIG),
     sampleWindowMs: configOverrides.sampleWindowMs ?? DEFAULT_CONFIG.sampleWindowMs,
     effectDebounceMs: configOverrides.effectDebounceMs ?? DEFAULT_CONFIG.effectDebounceMs,
@@ -176,7 +178,9 @@ const makeHarness = (configOverrides: HarnessOverrides = {}): Harness => {
   let queue: Array<{ callback: () => void; cancelled: boolean }> = []
   const deps: ThrowControllerDeps = {
     service: service.service,
-    config,
+    // Use-time read (the settings card edits the config at runtime); the
+    // harness swaps `config` to prove the controller notices.
+    getConfig: () => config,
     now: () => clock.value,
     getViewport: () => VIEWPORT,
     scheduleFrame: (callback) => {
@@ -194,6 +198,9 @@ const makeHarness = (configOverrides: HarnessOverrides = {}): Harness => {
     controller,
     clock,
     hidden,
+    setConfig: (next: ThrowPhysicsPluginConfig) => {
+      config = next
+    },
     pumpFrames: (times = 1) => {
       for (let i = 0; i < times; i += 1) {
         const batch = queue
@@ -331,6 +338,30 @@ describe('throw → flight', () => {
     h.clock.value += 16
     h.pumpFrames(1)
     expect(driver.applyCalls.length).toBe(applied)
+  })
+
+  it('uses the latest config for the next gesture (runtime-editable config)', () => {
+    const h = makeHarness()
+    performDrag(h, { x: 100, y: 100 }, { vx: 2000, vy: 0 })
+    let driver = h.service.drivers[0]!
+    h.clock.value += 16
+    h.pumpFrames(1)
+    expect(driver.applyCalls[0]!.x).toBeCloseTo(300 + 2000 * 0.016, 6) // multiplier 1
+    // The settings card saved a new throwMultiplier: the controller reads
+    // the config at use time, so the NEXT gesture flies with the new value
+    // (no re-instantiation needed). maxSpeed rises too so 2000×3 stays
+    // unclamped (the clamp would mask the multiplier change).
+    h.setConfig({
+      ...structuredClone(DEFAULT_CONFIG),
+      physics: { ...DEFAULT_CONFIG.physics, throwMultiplier: 3, maxSpeed: 100_000 },
+    })
+    h.clock.value += 16
+    h.pumpFrames(1) // let the old flight settle out (it ends on this frame batch)
+    performDrag(h, { x: 100, y: 100 }, { vx: 2000, vy: 0 })
+    driver = h.service.drivers[1]!
+    h.clock.value += 16
+    h.pumpFrames(1)
+    expect(driver.applyCalls[0]!.x).toBeCloseTo(300 + 6000 * 0.016, 6) // 2000 × 3
   })
 })
 

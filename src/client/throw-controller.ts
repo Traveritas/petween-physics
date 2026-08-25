@@ -18,12 +18,7 @@
  * The user's hand ALWAYS wins: a drag 'start' mid-flight aborts it without
  * committing (the drag's own end path persists the position).
  */
-import type {
-  BounceAnimationConfig,
-  FlashPoseConfig,
-  PhysicsConfig,
-  ThrowPhysicsPluginConfig,
-} from './config'
+import type { ThrowPhysicsPluginConfig } from './config'
 import { releaseVelocity, stepBall, type BallState, type ViewportBounds, type Wall } from './physics'
 import type { MotionPetClientService, PositionDriver, StageSnapshot } from './types'
 
@@ -49,7 +44,13 @@ interface Flight {
 /** All environment touchpoints, injectable for tests. */
 export interface ThrowControllerDeps {
   service: MotionPetClientService
-  config: ThrowPhysicsPluginConfig
+  /**
+   * Read the LATEST configuration at use time (per gesture, per frame) — the
+   * settings card edits it at runtime. Object identity need not be stable
+   * across calls; values within one frame come from one read so a frame
+   * integrates against a single consistent parameter set.
+   */
+  getConfig(): ThrowPhysicsPluginConfig
   /** Millisecond clock (performance.now in the browser). */
   now(): number
   /** Live viewport size (StageSnapshot carries no viewport dimensions). */
@@ -62,9 +63,6 @@ export interface ThrowControllerDeps {
 
 export class ThrowController {
   private readonly deps: ThrowControllerDeps
-  private readonly physics: PhysicsConfig
-  private readonly bounceAnimation: BounceAnimationConfig
-  private readonly flashPose: FlashPoseConfig
 
   private disposed = false
   private readonly unsubscribeStage: () => void
@@ -79,9 +77,6 @@ export class ThrowController {
 
   constructor(deps: ThrowControllerDeps) {
     this.deps = deps
-    this.physics = deps.config.physics
-    this.bounceAnimation = deps.config.bounceAnimation
-    this.flashPose = deps.config.flashPose
     // Subscribing pushes the current snapshot immediately (contract), which
     // seeds latestSnapshot before any gesture can happen.
     this.unsubscribeStage = deps.service.subscribeStage((snapshot) => this.onStage(snapshot))
@@ -139,11 +134,12 @@ export class ThrowController {
     if (!this.sampling) return // drag 'end' without our 'start' (or after an abort) — nothing to do
     this.sampling = false
     const snapshot = this.latestSnapshot
+    const physics = this.deps.getConfig().physics
     const velocity = releaseVelocity(this.samples, this.deps.now(), {
-      sampleWindowMs: this.deps.config.sampleWindowMs,
-      throwMultiplier: this.physics.throwMultiplier,
-      minThrowSpeed: this.physics.minThrowSpeed,
-      maxSpeed: this.physics.maxSpeed,
+      sampleWindowMs: this.deps.getConfig().sampleWindowMs,
+      throwMultiplier: physics.throwMultiplier,
+      minThrowSpeed: physics.minThrowSpeed,
+      maxSpeed: physics.maxSpeed,
     })
     // Below minThrowSpeed this was a "park", not a throw — leave the pet be.
     if (velocity === null || snapshot === null) return
@@ -154,7 +150,7 @@ export class ThrowController {
     this.samples.push({ x: snapshot.x, y: snapshot.y, t: this.deps.now() })
     // Keep the buffer bounded during long drags: anything older than two
     // sampling windows can no longer enter the release computation.
-    const cutoff = this.deps.now() - this.deps.config.sampleWindowMs * 2
+    const cutoff = this.deps.now() - this.deps.getConfig().sampleWindowMs * 2
     let drop = 0
     while (drop < this.samples.length && this.samples[drop]!.t < cutoff) drop += 1
     if (drop > 0) this.samples.splice(0, drop)
@@ -190,6 +186,9 @@ export class ThrowController {
     const now = this.deps.now()
     const dt = now - flight.lastTime
     flight.lastTime = now
+    // One read per frame: every parameter below integrates against a single
+    // consistent config snapshot even if the settings card saves mid-frame.
+    const config = this.deps.getConfig()
 
     // A hidden page must not animate (performance red line): stop flying,
     // persist where we are, hand the position back.
@@ -209,7 +208,7 @@ export class ThrowController {
             boxSize: this.latestSnapshot.stageSize * this.latestSnapshot.scale,
           }
 
-    const result = stepBall(flight.state, dt, this.physics, bounds)
+    const result = stepBall(flight.state, dt, config.physics, bounds)
     flight.state = result.state
 
     const applied = flight.driver.apply(result.state.x, result.state.y)
@@ -217,7 +216,7 @@ export class ThrowController {
       // false = suspended (a drag we may not have heard about yet) or
       // released. Tolerate a couple of frames before giving the lease back.
       flight.applyFalseStreak += 1
-      if (flight.applyFalseStreak >= this.deps.config.applyFalseTolerance) {
+      if (flight.applyFalseStreak >= config.applyFalseTolerance) {
         this.endFlight(false)
         return
       }
@@ -225,7 +224,7 @@ export class ThrowController {
       flight.applyFalseStreak = 0
     }
 
-    for (const wall of result.walls) this.fireWallEffects(wall)
+    for (const wall of result.walls) this.fireWallEffects(wall, config)
 
     if (result.state.resting) {
       // Settled on the floor below settleSpeed: persist, then hand back.
@@ -234,7 +233,7 @@ export class ThrowController {
     }
     // Energy-exhaustion guard: a near-elastic setup (restitution ~1,
     // friction 0) would otherwise bounce forever (§23: no endless loops).
-    if (now - flight.startedAt > this.deps.config.physics.maxFlightMs) {
+    if (now - flight.startedAt > config.physics.maxFlightMs) {
       this.endFlight(true)
       return
     }
@@ -269,20 +268,20 @@ export class ThrowController {
     }
   }
 
-  private fireWallEffects(wall: Wall): void {
+  private fireWallEffects(wall: Wall, config: ThrowPhysicsPluginConfig): void {
     const now = this.deps.now()
     const last = this.lastEffectAt.get(wall)
     // Same-wall debounce: corner jitter rebounds must not machine-gun the
     // effect (animation restart every frame would look like a glitch).
-    if (last !== undefined && now - last < this.deps.config.effectDebounceMs) return
+    if (last !== undefined && now - last < config.effectDebounceMs) return
     this.lastEffectAt.set(wall, now)
-    if (this.bounceAnimation.enabled) {
-      this.deps.service.playAnimation(this.bounceAnimation.id, {
-        interrupt: this.bounceAnimation.interrupt,
+    if (config.bounceAnimation.enabled) {
+      this.deps.service.playAnimation(config.bounceAnimation.id, {
+        interrupt: config.bounceAnimation.interrupt,
       })
     }
-    if (this.flashPose.enabled) {
-      this.deps.service.flashPose(this.flashPose.poseKey, this.flashPose.holdMs)
+    if (config.flashPose.enabled) {
+      this.deps.service.flashPose(config.flashPose.poseKey, config.flashPose.holdMs)
     }
   }
 }
