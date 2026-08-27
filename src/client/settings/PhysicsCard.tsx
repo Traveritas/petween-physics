@@ -164,9 +164,14 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
 
   // Animation options: default + custom library + builtins, plus the current
   // value when nothing lists it (e.g. a hand-typed id kept from old config).
+  // The custom library is filtered to one-shot interaction animations — both
+  // dropdowns (bounce + slide) share this list, and anything else (ambient
+  // kinds, repeat 'loop') played through the service would never settle:
+  // the main plugin's scheduler runs repeat.mode==='loop' plays infinite.
   const animationOptions = [DEFAULT_ANIMATION_OPTION]
   for (const custom of customs) {
     if (custom.id === DEFAULT_ANIMATION_OPTION.value) continue
+    if (custom.kind !== 'interaction' || custom.repeatMode !== 'once') continue
     animationOptions.push({ value: custom.id, label: `自定义 · ${custom.name} (${custom.id})` })
   }
   animationOptions.push(...BUILTIN_ANIMATIONS)

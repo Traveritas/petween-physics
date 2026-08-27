@@ -53,13 +53,25 @@ export interface ThrowControllerDeps {
   getConfig(): ThrowPhysicsPluginConfig
   /** Millisecond clock (performance.now in the browser). */
   now(): number
-  /** Live viewport size (StageSnapshot carries no viewport dimensions). */
+  /**
+   * Live viewport size — FALLBACK only: a provider snapshot that predates
+   * the viewport widening (2026-08-27) has no viewport field; this seam
+   * covers those older petween builds.
+   */
   getViewport(): { width: number; height: number }
   /** Arrange one frame callback; returns its cancel. */
   scheduleFrame(callback: () => void): () => void
   /** document.hidden — a hidden page must not keep a flight alive (§23). */
   isHidden(): boolean
 }
+
+/**
+ * Commit settle safety valve (ms). The main plugin guarantees a commit
+ * settles within ~15s (its request-layer timeout); this valve only catches a
+ * hung or older host so the exclusive lease can never be stranded forever by
+ * a promise that neither resolves nor rejects.
+ */
+const COMMIT_SETTLE_TIMEOUT_MS = 20_000
 
 export class ThrowController {
   private readonly deps: ThrowControllerDeps
@@ -93,6 +105,20 @@ export class ThrowController {
     this.sampling = false
     this.samples = []
     this.latestSnapshot = null
+  }
+
+  /**
+   * Settle the flight NOW when the page becomes hidden. The in-frame
+   * isHidden() check (§23) can never run on a hidden page — rAF callbacks
+   * are paused — so a mid-air flight would freeze with the exclusive lease
+   * held for the whole hidden period and resume on return. The entry file
+   * calls this from a visibilitychange listener; no-op when visible, idle,
+   * or disposed.
+   */
+  settleIfHidden(): void {
+    if (this.disposed || this.flight === null) return
+    if (!this.deps.isHidden()) return
+    this.endFlight(true)
   }
 
   private onStage(snapshot: StageSnapshot | null): void {
@@ -198,15 +224,29 @@ export class ThrowController {
     }
 
     // Bounds are recomputed every frame: the user may rescale the pet or
-    // resize the window mid-flight, and the flight must follow.
-    const viewport = this.deps.getViewport()
-    const bounds: ViewportBounds =
-      this.latestSnapshot === null
-        ? { ...viewport, boxSize: 0 }
-        : {
-            ...viewport,
-            boxSize: this.latestSnapshot.stageSize * this.latestSnapshot.scale,
-          }
+    // resize the window mid-flight, and the flight must follow. The snapshot
+    // viewport/bodyRect (petween ≥2026-08-27) are preferred; older providers
+    // fall back to the injected viewport and the square approximation.
+    const snapshot = this.latestSnapshot
+    const viewport = snapshot?.viewport ?? this.deps.getViewport()
+    const boxSize = snapshot === null ? 0 : snapshot.stageSize * snapshot.scale
+    const body = snapshot === null ? null : (snapshot.bodyRect ?? null)
+    let insets: ViewportBounds['insets']
+    if (snapshot !== null && body !== null && body.width > 0 && body.height > 0) {
+      // Visible-body margins inside the square: walls are hit by the pose
+      // IMAGE, not by the square's transparent padding (the phantom-gap
+      // overshoot the square approximation carried).
+      const margin = (value: number): number => Math.max(0, value)
+      insets = {
+        left: margin(body.x - snapshot.x),
+        top: margin(body.y - snapshot.y),
+        right: margin(snapshot.x + boxSize - (body.x + body.width)),
+        bottom: margin(snapshot.y + boxSize - (body.y + body.height)),
+      }
+    } else {
+      insets = undefined
+    }
+    const bounds: ViewportBounds = { ...viewport, boxSize, insets }
 
     const result = stepBall(flight.state, dt, config.physics, bounds)
     // Slide entry (bounces fell below minBounceHeightPx): fire the optional
@@ -258,14 +298,23 @@ export class ThrowController {
     this.cancelFrame = null
     flight.detachDriverDrag()
     if (commit) {
-      void flight.driver
-        .commit()
+      // Race the commit against a timeout: the catch below rescues a
+      // rejection, but only the race rescues a pending-forever promise.
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () => reject(new Error(`commit did not settle within ${COMMIT_SETTLE_TIMEOUT_MS}ms`)),
+          COMMIT_SETTLE_TIMEOUT_MS,
+        )
+      })
+      void Promise.race([flight.driver.commit(), timeout])
         .catch((error: unknown) => {
           console.warn('petween-physics: settle commit failed', error)
         })
         // Release strictly after the commit lands: releasing first would let
         // a remote overlay coordinate overwrite the settled position.
         .then(() => {
+          if (timeoutHandle !== undefined) clearTimeout(timeoutHandle)
           flight.driver.release()
         })
     } else {

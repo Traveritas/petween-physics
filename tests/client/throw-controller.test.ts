@@ -30,7 +30,9 @@ class FakeDriver implements PositionDriver {
   readonly calls: string[] = []
   /** Set to make commit() reject (the M5a failure path). */
   commitError: Error | null = null
-  private readonly dragListeners = new Set<() => void>()
+  /** Set to make commit() never settle (the 20s safety-valve path). */
+  hangCommit = false
+  private readonly dragListeners = new Set<(phase: 'start' | 'end') => void>()
 
   apply(x: number, y: number): boolean {
     this.applyCalls.push({ x, y })
@@ -41,6 +43,7 @@ class FakeDriver implements PositionDriver {
   commit(): Promise<void> {
     this.commits += 1
     this.calls.push('commit')
+    if (this.hangCommit) return new Promise<void>(() => {})
     return this.commitError === null ? Promise.resolve() : Promise.reject(this.commitError)
   }
 
@@ -49,7 +52,7 @@ class FakeDriver implements PositionDriver {
     this.calls.push('release')
   }
 
-  onUserDrag(listener: () => void): () => void {
+  onUserDrag(listener: (phase: 'start' | 'end') => void): () => void {
     this.dragListeners.add(listener)
     return () => {
       this.dragListeners.delete(listener)
@@ -58,7 +61,7 @@ class FakeDriver implements PositionDriver {
 
   /** Simulate the user grabbing the pet mid-flight (driver-level signal). */
   emitUserDrag(): void {
-    for (const listener of [...this.dragListeners]) listener()
+    for (const listener of [...this.dragListeners]) listener('start')
   }
 }
 
@@ -506,6 +509,27 @@ describe('settle commit/release contract (M5a)', () => {
     expect(driver.releases).toBe(1) // the lease is never stranded on a failed commit
     expect(consoleWarn).toHaveBeenCalledWith('petween-physics: settle commit failed', expect.any(Error))
   })
+
+  it('releases the lease via the 20s safety valve when commit never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const h = makeHarness({ physics: { restitution: 0, minBounceHeightPx: 0 } })
+      performDrag(h, { x: 500, y: 690 }, { vx: 0, vy: 400 })
+      const driver = h.service.drivers[0]!
+      driver.hangCommit = true
+      h.clock.value += 16
+      h.pumpFrames(1) // settle path starts a commit that never settles
+      expect(driver.commits).toBe(1)
+      expect(driver.releases).toBe(0) // the hung commit holds the chain
+      await vi.advanceTimersByTimeAsync(19_999)
+      expect(driver.releases).toBe(0) // the valve opens at exactly 20s
+      await vi.advanceTimersByTimeAsync(1)
+      expect(driver.releases).toBe(1) // ...and always releases afterwards
+      expect(consoleWarn).toHaveBeenCalledWith('petween-physics: settle commit failed', expect.any(Error))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('interruptions', () => {
@@ -550,6 +574,34 @@ describe('interruptions', () => {
     await flushMicrotasks()
     expect(driver.commits).toBe(1)
     expect(driver.releases).toBe(1)
+  })
+
+  it('settleIfHidden() lands the flight with NO frame — the visibilitychange path (rAF never fires hidden)', async () => {
+    const h = makeHarness()
+    performDrag(h, { x: 100, y: 100 }, { vx: 2000, vy: 0 })
+    const driver = h.service.drivers[0]!
+    h.hidden.value = true
+    // The entry file's visibilitychange listener calls settleIfHidden(); no
+    // frame is pumped because a hidden page never runs rAF callbacks.
+    h.controller.settleIfHidden()
+    expect(driver.commits).toBe(1)
+    await flushMicrotasks()
+    expect(driver.releases).toBe(1)
+    // The flight is over: a stale frame callback must not reanimate it.
+    const applied = driver.applyCalls.length
+    h.clock.value += 16
+    h.pumpFrames(1)
+    expect(driver.applyCalls.length).toBe(applied)
+  })
+
+  it('settleIfHidden() is a no-op while visible or without a live flight', () => {
+    const h = makeHarness()
+    h.controller.settleIfHidden() // idle: no crash, nothing started
+    performDrag(h, { x: 100, y: 100 }, { vx: 2000, vy: 0 })
+    const driver = h.service.drivers[0]!
+    h.controller.settleIfHidden() // page still visible: keep flying
+    expect(driver.commits).toBe(0)
+    expect(driver.releases).toBe(0)
   })
 
   it('clears everything when the session disappears (stage pushes null)', async () => {
@@ -609,5 +661,37 @@ describe('dispose', () => {
     // Stale 'end' after dispose: nothing may start.
     h.service.emitDrag('end')
     expect(h.service.leaseRequests).toBe(0)
+  })
+})
+
+describe('flight bounds from the snapshot widening (petween ≥2026-08-27)', () => {
+  it('prefers the snapshot viewport over the injected fallback', () => {
+    const h = makeHarness()
+    // The provider snapshot says 900px wide (deps still say 1000): released
+    // at 860 — inside the stale bounds, past the live ones — moving away.
+    const snap = (x: number, y: number): StageSnapshot =>
+      snapshotAt(x, y, { viewport: { width: 900, height: 800 } })
+    performDrag(h, { x: 860, y: 100 }, { vx: -400, vy: 0 }, snap)
+    h.clock.value += 16
+    h.pumpFrames(1)
+    const driver = h.service.drivers[0]!
+    expect(driver.applyCalls[0]!.x).toBe(800) // 900 − 100, not the deps' 900
+    expect(h.service.plays).toHaveLength(0) // moving away: no wall effect
+  })
+
+  it('wall contact follows the bodyRect insets — the image touches, not the padding', () => {
+    const h = makeHarness({ physics: { gravity: 0, restitution: 0.6, friction: 0 } })
+    // Square 100px with a 30px transparent margin on the left: the visible
+    // body touches the left wall when the SQUARE reaches −30.
+    const snap = (x: number, y: number): StageSnapshot =>
+      snapshotAt(x, y, { bodyRect: { x: x + 30, y, width: 40, height: 100 } })
+    performDrag(h, { x: 500, y: 100 }, { vx: -4000, vy: 0 }, snap)
+    const driver = h.service.drivers[0]!
+    for (let frame = 0; frame < 30; frame += 1) {
+      h.clock.value += 16
+      h.pumpFrames(1)
+    }
+    expect(Math.min(...driver.applyCalls.map((call) => call.x))).toBe(-30)
+    expect(h.service.plays.length).toBeGreaterThanOrEqual(1) // the wall effect fired at image contact
   })
 })

@@ -80,17 +80,45 @@ export function putPhysicsConfig(patch: PhysicsConfigPatch): Promise<{ config: T
   })
 }
 
-/** The subset of the main plugin's AnimationDefinition the card needs. */
+/**
+ * The subset of the main plugin's AnimationDefinition the card needs.
+ * kind/repeatMode come from the definition's `kind` / `repeat.mode` — the
+ * card filters the dropdowns to one-shot interactions (a repeat 'loop'
+ * animation played through the service would run forever and never settle).
+ */
 export interface AnimationOption {
   id: string
   name: string
+  kind: string
+  repeatMode: string
 }
 
 /**
- * Read the main plugin's custom animation library (id + name pairs for the
- * impact-animation dropdown). A failure (main plugin absent/old) is the
- * CALLER's signal to fall back to the builtin list — never a card crash.
+ * What GET /api/petween/animations actually answers: `customs` carries FULL
+ * AnimationDefinitions (petween src/motion/animation-definition.ts), not
+ * bare id/name pairs. Parsed defensively: a missing kind/repeat degrades to
+ * empty strings, which the card's filter then keeps out of the dropdowns.
  */
-export function getPetweenAnimations(): Promise<{ customs: AnimationOption[]; warnings: string[] }> {
-  return request(PETWEEN_ANIMATIONS_URL)
+interface AnimationsResponse {
+  customs: Array<{ id: string; name: string; kind?: unknown; repeat?: { mode?: unknown } }>
+  warnings?: string[]
+}
+
+/**
+ * Read the main plugin's custom animation library for the impact/slide
+ * animation dropdowns (id/name plus the kind/repeat fields the card's filter
+ * needs). A failure (main plugin absent/old) is the CALLER's signal to fall
+ * back to the builtin list — never a card crash.
+ */
+export async function getPetweenAnimations(): Promise<{ customs: AnimationOption[]; warnings: string[] }> {
+  const body = await request<AnimationsResponse>(PETWEEN_ANIMATIONS_URL)
+  return {
+    customs: body.customs.map((custom) => ({
+      id: custom.id,
+      name: custom.name,
+      kind: typeof custom.kind === 'string' ? custom.kind : '',
+      repeatMode: typeof custom.repeat?.mode === 'string' ? custom.repeat.mode : '',
+    })),
+    warnings: body.warnings ?? [],
+  }
 }

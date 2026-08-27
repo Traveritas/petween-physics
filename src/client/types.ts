@@ -32,6 +32,16 @@ export interface StageSnapshot {
   visualState: string | null
   activityMode: string | null
   started: boolean
+  /**
+   * v1 additive widening (petween 2026-08-27): absent on older providers —
+   * consumers must treat every field below as optional.
+   */
+  viewport?: { width: number; height: number }
+  dragging?: boolean
+  reducedMotion?: boolean
+  poseKey?: string | null
+  /** The visible pose-image box (viewport px, tighter than the square); null before the first pose. */
+  bodyRect?: { x: number; y: number; width: number; height: number } | null
 }
 
 /** Exclusive position lease handed out by requestPositionControl(). */
@@ -42,12 +52,17 @@ export interface PositionDriver {
   commit(): Promise<void>
   /** Hand the position back; remote overlay coordinates apply again. */
   release(): void
-  /** A user drag gesture started: the driver is suspended until it ends. */
-  onUserDrag(listener: () => void): () => void
+  /**
+   * A user drag gesture started or ended: 'start' suspends the driver
+   * (apply returns false), 'end' re-enables it (widened 2026-08-27 — a
+   * 0-arg listener from the v1 contract still receives both phases).
+   */
+  onUserDrag(listener: (phase: 'start' | 'end') => void): () => void
 }
 
 /** Mirror of the `petween/client` service. */
 export interface PetweenClientService {
+  /** Contract version. Bump and widen, never mutate in place. */
   readonly version: 1
   getStageSnapshot(): StageSnapshot | null
   /** Subscribing pushes the current value immediately; null = no session. */

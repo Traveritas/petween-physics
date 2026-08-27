@@ -105,6 +105,34 @@ describe('migrateLegacyHome', () => {
     expect(existsSync(join(legacy, 'config.json'))).toBe(true)
   })
 
+  it('keeps the winner data when a concurrent process renamed the legacy dir away mid-flight (no rm of the target)', () => {
+    const home = makeHome()
+    const legacy = join(home, 'motion-pet-physics')
+    const target = join(home, 'petween-physics')
+    seedLegacyHome(legacy)
+
+    const outcome = migrateLegacyHome(legacy, target, {
+      // Race simulation: by the time OUR rename "fails", another process has
+      // already completed the rename migration — legacy gone, target fully
+      // populated with the only surviving copy of the user's data.
+      renameDirSync: (_from, to) => {
+        rmSync(legacy, { recursive: true, force: true })
+        mkdirSync(to, { recursive: true })
+        writeFileSync(join(to, 'config.json'), 'migrated by the winner')
+        throw new Error('EPERM: operation not permitted (target appeared)')
+      },
+      copyDirSync: () => {
+        // cpSync would fail the same way: errorOnExist hits the winner's target.
+        throw new Error('EEXIST: file already exists')
+      },
+    })
+    expect(outcome).toBe('skipped')
+    // The winner's data survives; the old "failed" path would have rmSync'd it.
+    expect(existsSync(target)).toBe(true)
+    expect(readFileSync(join(target, 'config.json'), 'utf8')).toBe('migrated by the winner')
+    expect(existsSync(legacy)).toBe(false)
+  })
+
   it('warns, cleans a partial target and keeps the legacy home when even the copy fails', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {

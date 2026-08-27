@@ -315,3 +315,44 @@ describe('releaseVelocity', () => {
     expect(v!.vy).toBeCloseTo(3200, 8)
   })
 })
+
+describe('stepBall — visible-body insets (bodyRect consumption)', () => {
+  // The stage square carries transparent margins: with insets {left:20,
+  // right:20, top:10, bottom:10} the square may cross a wall by the inset
+  // before the VISIBLE body touches it. 100px box in 1000×800 → the square
+  // ranges x∈[-20,920], y∈[-10,710]; the visible body stays in [0,1000]×[0,800].
+  const INSET_BOUNDS: ViewportBounds = {
+    ...BOUNDS,
+    insets: { left: 20, top: 10, right: 20, bottom: 10 },
+  }
+
+  it('the left wall is hit 20px earlier for the square (the image touches at square x = -20)', () => {
+    const { state, walls } = stepBall(ball(-25, 400, -200, 0), 16, { ...PARAMS, gravity: 0 }, INSET_BOUNDS)
+    expect(state.x).toBe(-20)
+    expect(state.vx).toBeCloseTo(200 * 0.6, 10)
+    expect(walls).toEqual(['left'])
+  })
+
+  it('no wall while the square overhangs but the visible body is still inside', () => {
+    const { state, walls } = stepBall(ball(-15, 400, -100, 0), 0, { ...PARAMS, gravity: 0 }, INSET_BOUNDS)
+    expect(state.x).toBe(-15)
+    expect(walls).toEqual([])
+  })
+
+  it('the right and bottom walls extend by their insets', () => {
+    const right = stepBall(ball(925, 400, 200, 0), 16, { ...PARAMS, gravity: 0 }, INSET_BOUNDS)
+    expect(right.state.x).toBe(920)
+    expect(right.walls).toEqual(['right'])
+    const bottom = stepBall(ball(500, 715, 0, 400), 16, { ...PARAMS, gravity: 0 }, INSET_BOUNDS)
+    expect(bottom.state.y).toBe(710)
+    expect(bottom.walls).toEqual(['bottom'])
+  })
+
+  it('slide clamping and the floor line follow the insets', () => {
+    // sliding on the inset floor: y pinned to 710, side clamp at -20/920.
+    const sliding: BallState = { x: 100, y: 710, vx: -5000, vy: 0, sliding: true, resting: false }
+    const { state } = stepBall(sliding, 100, PARAMS, INSET_BOUNDS)
+    expect(state.x).toBe(-20)
+    expect(state.y).toBe(710)
+  })
+})

@@ -76,7 +76,7 @@ config——服务端按 `CONFIG_NUMERIC_FIELDS` 表**校验并拒绝**未知字
 | `physics.minThrowSpeed` | 350 | 0..10000 | 低于此释放速度(px/s)视为"停放"不起飞 |
 | `physics.settleSpeed` | 120 | 0..10000 | 贴底且速度低于此值(px/s)即落定 |
 | `physics.maxSpeed` | 4000 | 100..100000 | 释放速度上限(px/s) |
-| `physics.maxFlightMs` | 20000 | 500..600000 | 飞行时长兜底(近弹性配置也不会永久弹跳) |
+| `physics.maxFlightMs` | 20000 | 500..600000 | 飞行时长兜底(近弹性配置也不会永久弹跳);兜底落定发生在当前帧位置,该位置可能不在地面(重新拖拽即可修正) |
 | `physics.minBounceHeightPx` | 12 | 0..2000 | 预测反弹高度(vy²/2g)低于此值(px)改为地面滑动,不再反弹/不触发碰壁效果;0 = 保持旧的连弹行为 |
 | `physics.groundFriction` | 2 | 0..50 | 地面滑动期间的水平衰减(每秒,公式同空气阻尼);越大滑得越短 |
 | `bounceAnimation.enabled` | true | — | 碰壁时播放变形动画 |

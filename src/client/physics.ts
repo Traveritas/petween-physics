@@ -58,15 +58,20 @@ export interface PhysicsParams {
 }
 
 /**
- * Flight bounds. The pet's full bounding box stays INSIDE the viewport
- * (boxSize = stageSize * scale), which is stricter than the main plugin's
- * drag clamp (32px minimum visible) — a subset, so every physics position
- * passes the driver's own clamp unchanged.
+ * Flight bounds. The pet's VISIBLE body stays INSIDE the viewport: with the
+ * main plugin's bodyRect (2026-08-27) the insets carry the transparent
+ * margins between the pose image and the stage square, so walls are hit by
+ * the image, not by invisible padding — no insets (older providers) keeps
+ * the legacy square bounds. Stricter than the main plugin's drag clamp
+ * (32px minimum visible) — a subset, so every physics position passes the
+ * driver's own clamp unchanged.
  */
 export interface ViewportBounds {
   width: number
   height: number
   boxSize: number
+  /** Visible-body margins inside the square (px, >= 0); defaults to none. */
+  insets?: { left: number; top: number; right: number; bottom: number }
 }
 
 export interface StepResult {
@@ -98,8 +103,18 @@ export function stepBall(
   const dt = clampNumber(dtMs, 0, MAX_STEP_MS) / 1000
   const restitution = clampNumber(params.restitution, 0, 1)
 
-  const maxX = Math.max(0, bounds.width - bounds.boxSize)
-  const maxY = Math.max(0, bounds.height - bounds.boxSize)
+  // Inset-adjusted travel range for the square top-left: the image rides
+  // inside the square, so the square may cross the wall by the inset amount
+  // before the VISIBLE body touches it. Degrades to the plain square range
+  // without insets. Collapsed ranges (body larger than the viewport) pin
+  // like the old bounded-state safety.
+  const insets = bounds.insets ?? { left: 0, top: 0, right: 0, bottom: 0 }
+  // (avoid -0: a zero inset keeps the plain 0 wall — Object.is-sensitive tests aside,
+  // a -0 clamp would also serialize into snapshots as "-0".)
+  const minX = insets.left > 0 ? -insets.left : 0
+  const minY = insets.top > 0 ? -insets.top : 0
+  const maxX = Math.max(minX, bounds.width - bounds.boxSize + (insets.right > 0 ? insets.right : 0))
+  const maxY = Math.max(minY, bounds.height - bounds.boxSize + (insets.bottom > 0 ? insets.bottom : 0))
   const walls: Wall[] = []
   let { x, y, vx, vy, sliding } = state
 
@@ -111,8 +126,8 @@ export function stepBall(
     x += vx * dt
     y = maxY
     vy = 0
-    if (x <= 0) {
-      x = 0
+    if (x <= minX) {
+      x = minX
       if (vx < 0) vx = 0
     } else if (x >= maxX) {
       x = maxX
@@ -126,8 +141,8 @@ export function stepBall(
     x += vx * dt
     y += vy * dt
 
-    if (x <= 0) {
-      x = 0
+    if (x <= minX) {
+      x = minX
       if (vx < 0) {
         vx = -vx * restitution
         walls.push('left')
@@ -139,8 +154,8 @@ export function stepBall(
         walls.push('right')
       }
     }
-    if (y <= 0) {
-      y = 0
+    if (y <= minY) {
+      y = minY
       if (vy < 0) {
         vy = -vy * restitution
         walls.push('top')

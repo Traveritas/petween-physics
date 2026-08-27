@@ -12,6 +12,26 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
+/** Decimal places implied by a slider step (0.05 → 2, 1 → 0). */
+function stepDecimals(step: number): number {
+  if (!Number.isFinite(step) || step <= 0) return 0
+  const text = String(step)
+  if (text.includes('e')) return 2 // exotic step notation: a safe default
+  const dot = text.indexOf('.')
+  return dot === -1 ? 0 : text.length - dot - 1
+}
+
+/**
+ * Snap a raw slider position onto the min-anchored step grid, clamped to the
+ * range. The round-trip through toFixed(stepDecimals) kills float tails
+ * (0.1 + 0.2 = 0.30000000000000004) before they reach the config.
+ */
+function quantizeToStep(value: number, min: number, max: number, step: number): number {
+  if (!Number.isFinite(step) || step <= 0) return clamp(value, min, max)
+  const snapped = min + Math.round((value - min) / step) * step
+  return clamp(Number(snapped.toFixed(stepDecimals(step))), min, max)
+}
+
 export function Slider(props: {
   label: string
   min: number
@@ -32,10 +52,12 @@ export function Slider(props: {
         step={props.step}
         value={props.value}
         disabled={props.disabled}
-        onChange={(event) => props.onChange(Number(event.target.value))}
+        onChange={(event) =>
+          props.onChange(quantizeToStep(Number(event.target.value), props.min, props.max, props.step))
+        }
       />
       <span className={styles.value}>
-        {props.value}
+        {props.value.toFixed(stepDecimals(props.step))}
         {props.unit ?? ''}
       </span>
     </label>

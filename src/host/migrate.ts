@@ -17,7 +17,8 @@
  *    directory as the safety copy.
  * 4. even the copy fails → warn, best-effort remove a half-written target so
  *    the next boot retries, keep booting on defaults. Never crash the plugin
- *    over its own migration.
+ *    over its own migration. Exception: if the legacy dir vanished meanwhile,
+ *    a concurrent process won the rename — its target is kept (skip).
  */
 import { cpSync, existsSync, renameSync, rmSync } from 'node:fs'
 
@@ -58,6 +59,18 @@ export function migrateLegacyHome(
       deps.copyDirSync(legacyDir, targetDir)
       return 'copied'
     } catch (error) {
+      // Concurrency guard: if the legacy dir has vanished since the check at
+      // the top, a concurrent process completed the rename migration while we
+      // were failing — the target now holds that winner's fully migrated
+      // data, and removing it would destroy the only copy. Skip instead.
+      if (!existsSync(legacyDir)) return 'skipped'
+      // Re-check immediately before the remove: a concurrent winner may have
+      // renamed legacy onto the target AFTER the guard above passed — from
+      // that moment the target is the winner's ONLY copy and rmSync would
+      // destroy it. (A microsecond TOCTOU remains between this check and the
+      // rmSync; on Windows a rename onto a non-empty target fails anyway, so
+      // the re-check closes every practically reachable interleaving.)
+      if (!existsSync(legacyDir)) return 'skipped'
       // Drop a partial copy so the next boot retries from a clean slate;
       // never touch the legacy tree.
       try {

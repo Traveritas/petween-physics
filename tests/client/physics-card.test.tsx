@@ -220,7 +220,7 @@ describe('PhysicsCard', () => {
     const config = structuredClone(DEFAULT_CONFIG)
     config.bounceAnimation.id = 'user:weird-old'
     const { hub } = makeHub(config)
-    await render(hub, [{ id: 'user:my-squash', name: 'My Squash' }])
+    await render(hub, [{ id: 'user:my-squash', name: 'My Squash', kind: 'interaction', repeatMode: 'once' }])
     const animationSelect = container.querySelectorAll<HTMLSelectElement>('select')[0]!
     const options = [...animationSelect.options].map((option) => option.textContent ?? '')
     expect(options.some((text) => text.includes('本插件默认'))).toBe(true)
@@ -228,6 +228,46 @@ describe('PhysicsCard', () => {
     expect(options.some((text) => text.includes('click-pop'))).toBe(true)
     expect(options.some((text) => text.includes('user:weird-old'))).toBe(true) // current unlisted
     expect(animationSelect.value).toBe('user:weird-old')
+  })
+
+  it('filters non-interaction / non-once customs out of BOTH dropdowns (loop plays would never settle)', async () => {
+    const { hub } = makeHub()
+    await render(hub, [
+      { id: 'user:one-shot', name: 'One Shot', kind: 'interaction', repeatMode: 'once' },
+      { id: 'user:looper', name: 'Looper', kind: 'interaction', repeatMode: 'loop' },
+      { id: 'user:swayer', name: 'Swayer', kind: 'ambient', repeatMode: 'random-interval' },
+      { id: 'user:no-meta', name: 'No Meta', kind: '', repeatMode: '' },
+    ])
+    const bounceSelect = container.querySelectorAll<HTMLSelectElement>('select')[0]!
+    const bounceIds = [...bounceSelect.options].map((option) => option.value)
+    expect(bounceIds).toContain('user:one-shot')
+    expect(bounceIds).not.toContain('user:looper')
+    expect(bounceIds).not.toContain('user:swayer')
+    expect(bounceIds).not.toContain('user:no-meta') // unparsed metadata never reaches the list
+    // The slide dropdown shares the same filtered list.
+    const slideSelect = [...container.querySelectorAll<HTMLSelectElement>('select')].find((select) =>
+      [...select.options].some((option) => option.textContent === '不播放'),
+    )
+    if (slideSelect === undefined) throw new Error('slide animation select missing')
+    const slideIds = [...slideSelect.options].map((option) => option.value)
+    expect(slideIds).toContain('user:one-shot')
+    expect(slideIds).not.toContain('user:looper')
+    expect(slideIds).not.toContain('user:swayer')
+  })
+
+  it('slider edits commit min-anchored step-quantized values (no float tails) and display at step precision', async () => {
+    const { hub, seams } = makeHub()
+    await render(hub)
+    const restitution = container.querySelectorAll<HTMLInputElement>('input[type="range"]')[0]!
+    expect(restitution).toBeDefined() // 弹性系数: min 0, max 1, step 0.05
+    act(() => setInputValue(restitution, '0.123456'))
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+    })
+    expect(seams.sendConfig).toHaveBeenCalledTimes(1)
+    expect((seams.sendConfig.mock.calls[0]![0] as ThrowPhysicsPluginConfig).physics.restitution).toBe(0.1)
+    // Display formats at step precision (0.05 → two decimals), never a raw tail.
+    expect(restitution.parentElement!.textContent).toContain('0.10')
   })
 
   it('a failed main-plugin animations read leaves the static lists (no crash)', async () => {

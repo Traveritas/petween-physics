@@ -44,6 +44,11 @@ export function apply(ctx: ClientContext) {
     },
     isHidden: () => document.hidden,
   })
+  // §23 for real: rAF callbacks never fire while the page is hidden, so the
+  // controller's in-frame hidden check alone would freeze a flight mid-air
+  // with the lease held. The visibilitychange listener lands it immediately.
+  const onVisibilityChange = (): void => controller.settleIfHidden()
+  document.addEventListener('visibilitychange', onVisibilityChange)
   // Settings card seat — `settings.section` (list slot, id/order/label
   // options; dsh-client-ui-settings lib/types/client/contract/slots.d.ts).
   // WHY this and not `settings.plugin.item` (the Plugins tab's card slot):
@@ -63,6 +68,7 @@ export function apply(ctx: ClientContext) {
     ),
   )
   return () => {
+    document.removeEventListener('visibilitychange', onVisibilityChange)
     disposeCard()
     controller.dispose()
   }
