@@ -74,6 +74,8 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   const [draft, setDraft] = useState<ThrowPhysicsPluginConfig | null>(null)
   const [customs, setCustoms] = useState<AnimationOption[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** The draft queued behind saveTimer; flushed if the card unmounts mid-debounce. */
+  const pendingDraft = useRef<ThrowPhysicsPluginConfig | null>(null)
   /** Draft version last PUT; mirrors "已保存" vs "待保存". */
   const [pending, setPending] = useState(false)
 
@@ -83,9 +85,18 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
 
   useEffect(
     () => () => {
-      if (saveTimer.current !== null) clearTimeout(saveTimer.current)
+      if (saveTimer.current === null) return
+      // The last edit is still inside the debounce window — flush it instead
+      // of dropping it: closing the settings card right after an edit must
+      // not silently lose that edit. Fire-and-forget (the hub owns the PUT
+      // and its error surface); the card is going away either way.
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
+      const queued = pendingDraft.current
+      pendingDraft.current = null
+      if (queued !== null) void hub.update(queued)
     },
-    [],
+    [hub],
   )
 
   // Adopt the loaded config exactly once (a mid-session external change does
@@ -122,8 +133,10 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
     setDraft(next)
     setPending(true)
     if (saveTimer.current !== null) clearTimeout(saveTimer.current)
+    pendingDraft.current = next
     saveTimer.current = setTimeout(() => {
       saveTimer.current = null
+      pendingDraft.current = null
       void hub.update(next).then(() => {
         setPending(false)
       })
@@ -157,6 +170,7 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
     }
+    pendingDraft.current = null
     setPending(false)
     setDraft(structuredClone(DEFAULT_CONFIG))
     void hub.reset()

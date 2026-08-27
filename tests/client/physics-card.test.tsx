@@ -154,6 +154,22 @@ describe('PhysicsCard', () => {
     expect(container.textContent).toContain('已保存')
   })
 
+  it('unmount inside the debounce window flushes the pending edit instead of dropping it', async () => {
+    const { hub, seams } = makeHub()
+    await render(hub)
+    const input = gravityInput()
+    act(() => setInputValue(input, '7000'))
+    act(() => commitWithEnter(input))
+    expect(seams.sendConfig).not.toHaveBeenCalled() // still inside the window
+    act(() => {
+      root.unmount()
+    })
+    mounted = false // afterEach must not unmount again
+    expect(seams.sendConfig).toHaveBeenCalledTimes(1)
+    const flushed = seams.sendConfig.mock.calls[0]![0] as ThrowPhysicsPluginConfig
+    expect(flushed.physics.gravity).toBe(7000)
+  })
+
   it('rapid edits coalesce into one PUT for the final value', async () => {
     const { hub, seams } = makeHub()
     await render(hub)
