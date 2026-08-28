@@ -194,9 +194,16 @@ export class ThrowController {
       lastTime: now,
       startedAt: now,
       applyFalseStreak: 0,
-      // Mid-air catch: the driver signals a user grab; the service-level
-      // 'start' subscription fires too — both routes are idempotent.
-      detachDriverDrag: driver.onUserDrag(() => this.endFlight(false)),
+      // Mid-air catch: only a real re-grab ('start') kills the flight. The
+      // driver also fires 'end' when the launching gesture resumes apply() —
+      // ending on any phase made the flight kill itself in the same stack
+      // that started it (the service-level 'end' listener ran first, took the
+      // lease, then received the gesture's trailing driver-level 'end').
+      // The service-level 'start' subscription covers the same catch — both
+      // routes are idempotent.
+      detachDriverDrag: driver.onUserDrag((phase) => {
+        if (phase === 'start') this.endFlight(false)
+      }),
     }
     this.scheduleNextFrame()
   }

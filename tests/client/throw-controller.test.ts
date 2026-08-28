@@ -59,9 +59,9 @@ class FakeDriver implements PositionDriver {
     }
   }
 
-  /** Simulate the user grabbing the pet mid-flight (driver-level signal). */
-  emitUserDrag(): void {
-    for (const listener of [...this.dragListeners]) listener('start')
+  /** Simulate a driver-level drag phase (defaults to the user-grab 'start'). */
+  emitUserDrag(phase: 'start' | 'end' = 'start'): void {
+    for (const listener of [...this.dragListeners]) listener(phase)
   }
 }
 
@@ -547,6 +547,25 @@ describe('interruptions', () => {
     h.clock.value += 16
     h.pumpFrames(1)
     expect(driver.applyCalls.length).toBe(applied) // flight is over
+  })
+
+  it("the launching gesture's trailing driver-level 'end' must NOT abort the flight (petween end-fan regression)", () => {
+    const h = makeHarness()
+    performDrag(h, { x: 100, y: 100 }, { vx: 2000, vy: 0 })
+    const driver = h.service.drivers[0]!
+    // Real petween order on pointerup: the service-level 'end' fans first
+    // (startFlight takes the lease and registers the mid-air-catch listener),
+    // then the SAME gesture's driver-level 'end' reaches the fresh lease —
+    // a resume signal ("apply is honored again"), not a grab. A
+    // phase-agnostic listener killed the flight in the same call stack that
+    // started it; only 'start' may abort.
+    driver.emitUserDrag('end')
+    expect(driver.releases).toBe(0)
+    expect(driver.commits).toBe(0)
+    h.clock.value += 16
+    h.pumpFrames(1) // still flying
+    expect(driver.applyCalls.length).toBeGreaterThan(0)
+    expect(driver.releases).toBe(0)
   })
 
   it('aborts when driver.apply keeps rejecting (lease lost elsewhere)', async () => {
