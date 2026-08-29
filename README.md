@@ -15,10 +15,15 @@
 
 ## 安装
 
-要求：已安装 DSH（`@deepseek-ai/dsh`，在 0.1.0-rc.7 上实测）与主插件 `petween`。
+要求：已安装 DSH（`@deepseek-ai/dsh`，在 0.1.0-rc.7 上实测）、[主插件 petween](https://github.com/Traveritas/petween)（≥ 1.2.0，需先行安装）、Node ≥ 20 与 pnpm。
 
 ```bash
-dsh plugin --profile web add link:/path/to/petween-physics
+git clone https://github.com/Traveritas/petween-physics.git
+cd petween-physics
+pnpm install
+pnpm run build    # 产出 lib/（仓库不含构建产物，安装前必须构建）
+
+dsh plugin --profile web add link:/path/to/petween-physics    # link: 后指向你克隆的目录
 ```
 
 重启 `dsh web` 生效。首次加载时，host 半会向主插件的动画库注册默认反弹动画
