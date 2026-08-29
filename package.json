@@ -9,6 +9,9 @@
     "url": "https://github.com/Traveritas/petween-physics.git"
   },
   "homepage": "https://github.com/Traveritas/petween-physics",
+  "bugs": {
+    "url": "https://github.com/Traveritas/petween-physics/issues"
+  },
   "keywords": [
     "dsh",
     "deepseek-harness",
