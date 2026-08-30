@@ -122,6 +122,7 @@ describe('PUT /api/petween-physics/config', () => {
       bounceAnimation: { enabled: true, id: 'user:physics-bounce-pop', interrupt: true },
       flashPose: { enabled: true, poseKey: 'error', holdMs: 900 },
       slideAnimationId: 'user:physics-slide-dash',
+      slideInterrupt: false,
       sampleWindowMs: 140,
       effectDebounceMs: 180,
       applyFalseTolerance: 3,
@@ -177,6 +178,11 @@ describe('PUT /api/petween-physics/config', () => {
     ])
     const badInt = await put({ applyFalseTolerance: 2.5 })
     expect(badInt.status).toBe(400)
+    const badSlideInterrupt = await put({ slideInterrupt: 'yes' })
+    expect(badSlideInterrupt.status).toBe(400)
+    expect(((await badSlideInterrupt.json()) as { error: { details: unknown[] } }).error.details).toEqual([
+      { path: 'slideInterrupt', message: 'expected a boolean' },
+    ])
     const badPose = await put({ flashPose: { poseKey: 'sleeping' } })
     expect(badPose.status).toBe(400)
     expect(((await badPose.json()) as { error: { details: Array<{ message: string }> } }).error.details[0].message).toContain('idle')
@@ -289,5 +295,15 @@ describe('validation helpers', () => {
     expect(repaired.physics.restitution).toBe(DEFAULT_CONFIG.physics.restitution)
     expect(repaired.sampleWindowMs).toBe(400)
     expect(repaired).toEqual({ ...structuredClone(DEFAULT_CONFIG), sampleWindowMs: 400 })
+  })
+
+  it('slideInterrupt: a missing field keeps the base, strict rejects non-booleans, lenient repairs to the default', () => {
+    const base = structuredClone(DEFAULT_CONFIG)
+    base.slideInterrupt = false
+    expect(validateConfigPatch({ physics: { gravity: 4000 } }, base).slideInterrupt).toBe(false) // absent keeps base
+    expect(() => validateConfigPatch({ slideInterrupt: 'yes' }, base)).toThrow(/slideInterrupt: expected a boolean/)
+    expect(repairConfig({ slideInterrupt: 'yes' }).slideInterrupt).toBe(true) // invalid → DEFAULT true
+    expect(repairConfig({ slideInterrupt: false }).slideInterrupt).toBe(false) // valid survives
+    expect(repairConfig({}).slideInterrupt).toBe(true) // legacy file without the field → default
   })
 })

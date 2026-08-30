@@ -72,6 +72,14 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   // The UI draft: adopted from the hub once the first GET lands (or from the
   // silent DEFAULT fallback on load failure), then owned by the controls.
   const [draft, setDraft] = useState<ThrowPhysicsPluginConfig | null>(null)
+  /**
+   * True while the draft is the load-failure DEFAULT fallback and the user
+   * has not touched it: a later successful (re)load must RE-adopt the real
+   * config, otherwise the next debounced save would write the defaults over
+   * the on-disk config. Any edit (scheduleSave) or explicit reset drops the
+   * flag — a touched draft is never clobbered.
+   */
+  const fallbackDraft = useRef(false)
   const [customs, setCustoms] = useState<AnimationOption[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** The draft queued behind saveTimer; flushed if the card unmounts mid-debounce. */
@@ -100,9 +108,17 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   )
 
   // Adopt the loaded config exactly once (a mid-session external change does
-  // not clobber the user's open draft; the next card mount picks it up).
+  // not clobber the user's open draft; the next card mount picks it up) —
+  // except an unedited load-failure fallback draft, which a successful retry
+  // replaces with the real config.
   useEffect(() => {
     if (draft === null && (snapshot.loaded || snapshot.loadError !== null)) {
+      fallbackDraft.current = snapshot.loadError !== null
+      setDraft(structuredClone(snapshot.config))
+      return
+    }
+    if (fallbackDraft.current && snapshot.loaded && snapshot.loadError === null) {
+      fallbackDraft.current = false
       setDraft(structuredClone(snapshot.config))
     }
   }, [draft, snapshot.loaded, snapshot.loadError, snapshot.config])
@@ -130,6 +146,7 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   }
 
   const scheduleSave = (next: ThrowPhysicsPluginConfig): void => {
+    fallbackDraft.current = false // a touched fallback draft belongs to the user
     setDraft(next)
     setPending(true)
     if (saveTimer.current !== null) clearTimeout(saveTimer.current)
@@ -164,6 +181,9 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   const patchSlideAnimation = (value: string): void => {
     scheduleSave({ ...draft, slideAnimationId: value === '__none__' ? null : value })
   }
+  const patchSlideInterrupt = (checked: boolean): void => {
+    scheduleSave({ ...draft, slideInterrupt: checked })
+  }
 
   const resetDefaults = (): void => {
     if (saveTimer.current !== null) {
@@ -172,6 +192,7 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
     }
     pendingDraft.current = null
     setPending(false)
+    fallbackDraft.current = false // an explicit reset is user intent, not fallback
     setDraft(structuredClone(DEFAULT_CONFIG))
     void hub.reset()
   }
@@ -191,6 +212,17 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   animationOptions.push(...BUILTIN_ANIMATIONS)
   if (!animationOptions.some((option) => option.value === draft.bounceAnimation.id)) {
     animationOptions.push({ value: draft.bounceAnimation.id, label: `当前值 · ${draft.bounceAnimation.id}` })
+  }
+
+  // Slide dropdown: "不播放" + the same filtered library, with the same
+  // current-value fallback as the bounce dropdown — a hand-edited config may
+  // hold an id the filter dropped, and the select must still show it.
+  const slideOptions = [{ value: '__none__', label: '不播放' }, ...animationOptions]
+  if (
+    draft.slideAnimationId !== null &&
+    !slideOptions.some((option) => option.value === draft.slideAnimationId)
+  ) {
+    slideOptions.push({ value: draft.slideAnimationId, label: `当前值 · ${draft.slideAnimationId}` })
   }
 
   const physics = draft.physics
@@ -339,8 +371,14 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
       <SelectRow
         label="滑动动画"
         value={draft.slideAnimationId ?? '__none__'}
-        options={[{ value: '__none__', label: '不播放' }, ...animationOptions]}
+        options={slideOptions}
         onChange={patchSlideAnimation}
+      />
+      <Toggle
+        label="滑动动画打断在播动画"
+        checked={draft.slideInterrupt}
+        disabled={draft.slideAnimationId === null}
+        onChange={patchSlideInterrupt}
       />
 
       <div className={styles.groupTitle}>碰壁切图</div>

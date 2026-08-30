@@ -63,13 +63,11 @@ export function migrateLegacyHome(
       // the top, a concurrent process completed the rename migration while we
       // were failing — the target now holds that winner's fully migrated
       // data, and removing it would destroy the only copy. Skip instead.
-      if (!existsSync(legacyDir)) return 'skipped'
-      // Re-check immediately before the remove: a concurrent winner may have
-      // renamed legacy onto the target AFTER the guard above passed — from
-      // that moment the target is the winner's ONLY copy and rmSync would
-      // destroy it. (A microsecond TOCTOU remains between this check and the
-      // rmSync; on Windows a rename onto a non-empty target fails anyway, so
-      // the re-check closes every practically reachable interleaving.)
+      // Known residual window: a winner renaming legacy onto the target right
+      // AFTER this guard still loses its data to the rmSync below (a one-shot
+      // fallback path only; on Windows a rename onto a non-empty target fails
+      // anyway). The real fix — copy onto a unique temp dir, then rename —
+      // is tracked in the main repo's deferred backlog (B11).
       if (!existsSync(legacyDir)) return 'skipped'
       // Drop a partial copy so the next boot retries from a clean slate;
       // never touch the legacy tree.

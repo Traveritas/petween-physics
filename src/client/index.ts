@@ -33,6 +33,15 @@ export function apply(ctx: ClientContext) {
   // if it fails) the controller runs on DEFAULT_CONFIG — the hub broadcast is
   // irrelevant to it because it reads getConfig() at use time.
   void physicsConfigHub.load()
+  // Close the boot-time register→play window in one nudge: without it the
+  // main plugin's animation registry only syncs on its 3s poll (unbounded
+  // while the page is hidden). Optional in the v1 mirror — older providers
+  // lack it. Fire-and-forget: a failure just leaves the poll in charge.
+  if (service.resyncAnimations !== undefined) {
+    void service.resyncAnimations().catch(() => {
+      /* sync falls back to the provider's regular poll */
+    })
+  }
   const controller = new ThrowController({
     service,
     getConfig: () => physicsConfigHub.getConfig(),

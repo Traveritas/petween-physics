@@ -91,6 +91,7 @@ config——服务端按 `CONFIG_NUMERIC_FIELDS` 表**校验并拒绝**未知字
 | `flashPose.poseKey` | `success` | 六个 pose 之一 | 切换到的 pose 槽位 |
 | `flashPose.holdMs` | 800 | 0..60000 | 图片保持 ms(≤0 保持到下个状态变化) |
 | `slideAnimationId` | `null` | null 或非空 ≤200 字符 | 进入地面滑动时播放一次的动画 id;null = 不播 |
+| `slideInterrupt` | true | — | 滑动动画开始播放时打断在播动画(slideAnimationId 为 null 时无意义) |
 | `sampleWindowMs` | 120 | 10..2000 | 拖拽测速窗口 |
 | `effectDebounceMs` | 150 | 0..5000 | 同壁效果去抖窗口 |
 | `applyFalseTolerance` | 2 | 1..60(整数) | 连续 apply 失败容忍次数 |

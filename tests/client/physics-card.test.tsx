@@ -2,9 +2,11 @@
 /**
  * PhysicsCard tests: the settings.section card — group rendering, the
  * debounced auto-save (one PUT per edit burst, 300ms), the reset button, the
- * load-failure fallback (form on defaults + error line), and the
+ * load-failure fallback (form on defaults + error line + retry re-adopting
+ * the real config into an untouched fallback draft), and the
  * impact-animation dropdown sources (default + main-plugin customs + builtins
- * + the current unlisted value).
+ * + the current unlisted value, in BOTH dropdowns), plus the slide-interrupt
+ * toggle (disabled while 不播放; saves through the same debounce).
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -91,6 +93,14 @@ const findButton = (text: string): HTMLButtonElement => {
   const button = [...container.querySelectorAll('button')].find((b) => b.textContent === text)
   if (button === undefined) throw new Error(`button "${text}" missing`)
   return button
+}
+
+/** The 滑动动画打断在播动画 toggle's checkbox. */
+const slideInterruptCheckbox = (): HTMLInputElement => {
+  const label = [...container.querySelectorAll('label')].find((l) => l.textContent?.includes('滑动动画打断'))
+  const input = label?.querySelector<HTMLInputElement>('input[type="checkbox"]')
+  if (input === null || input === undefined) throw new Error('slide interrupt toggle missing')
+  return input
 }
 
 describe('PhysicsCard', () => {
@@ -230,6 +240,127 @@ describe('PhysicsCard', () => {
       findButton('重试').click()
     })
     expect(container.textContent).not.toContain('配置加载失败')
+  })
+
+  it('a successful retry re-adopts the real config into an untouched fallback draft (no default clobber on save)', async () => {
+    const realConfig = structuredClone(DEFAULT_CONFIG)
+    realConfig.physics.gravity = 2400
+    realConfig.slideAnimationId = 'builtin:click-spin'
+    let fail = true
+    const seams: HubSeams = {
+      fetchConfig: vi.fn(async () => {
+        if (fail) throw new Error('offline')
+        return { config: structuredClone(realConfig) }
+      }),
+      sendConfig: vi.fn(async (patch: PhysicsConfigPatch) => ({
+        config: {
+          ...structuredClone(realConfig),
+          ...patch,
+          physics: { ...realConfig.physics, ...patch.physics },
+        } as ThrowPhysicsPluginConfig,
+      })),
+    }
+    const hub = new PhysicsConfigHub(seams)
+    await render(hub)
+    expect(container.textContent).toContain('配置加载失败')
+    expect(gravityInput().value).toBe('3000') // fallback defaults
+
+    fail = false
+    await act(async () => {
+      findButton('重试').click()
+    })
+    expect(container.textContent).not.toContain('配置加载失败')
+    expect(gravityInput().value).toBe('2400') // draft re-adopted the real config
+
+    // A later edit must PUT the REAL values, never the fallback defaults.
+    const input = gravityInput()
+    act(() => setInputValue(input, '2600'))
+    act(() => commitWithEnter(input))
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+    })
+    expect(seams.sendConfig).toHaveBeenCalledTimes(1)
+    const patch = seams.sendConfig.mock.calls[0]![0] as ThrowPhysicsPluginConfig
+    expect(patch.physics.gravity).toBe(2600)
+    expect(patch.slideAnimationId).toBe('builtin:click-spin') // real field kept, not the DEFAULT null
+  })
+
+  it('an edited fallback draft is never clobbered by a later successful retry (user edits win)', async () => {
+    const realConfig = structuredClone(DEFAULT_CONFIG)
+    realConfig.physics.gravity = 2400
+    let fail = true
+    const seams: HubSeams = {
+      fetchConfig: vi.fn(async () => {
+        if (fail) throw new Error('offline')
+        return { config: structuredClone(realConfig) }
+      }),
+      // Still offline for saves too: the edit stays local, loadError persists.
+      sendConfig: vi.fn(async () => {
+        throw new Error('still offline')
+      }),
+    }
+    const hub = new PhysicsConfigHub(seams)
+    await render(hub)
+    expect(container.textContent).toContain('配置加载失败')
+
+    // Edit the fallback draft while the load is broken.
+    const input = gravityInput()
+    act(() => setInputValue(input, '5000'))
+    act(() => commitWithEnter(input))
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+    })
+    expect(seams.sendConfig).toHaveBeenCalledTimes(1)
+
+    // The retry succeeds, but the draft keeps the user's edit over the real 2400.
+    fail = false
+    await act(async () => {
+      findButton('重试').click()
+    })
+    expect(container.textContent).not.toContain('配置加载失败')
+    expect(gravityInput().value).toBe('5000')
+  })
+
+  it('the slide dropdown shows an unlisted current value (hand-edited config), like the bounce dropdown', async () => {
+    const config = structuredClone(DEFAULT_CONFIG)
+    config.slideAnimationId = 'user:old-slide' // e.g. a loop custom the filter drops
+    const { hub } = makeHub(config)
+    await render(hub)
+    const slideSelect = [...container.querySelectorAll<HTMLSelectElement>('select')].find((select) =>
+      [...select.options].some((option) => option.textContent === '不播放'),
+    )
+    if (slideSelect === undefined) throw new Error('slide animation select missing')
+    expect(slideSelect.value).toBe('user:old-slide')
+    const labels = [...slideSelect.options].map((option) => option.textContent ?? '')
+    expect(labels.some((text) => text.includes('当前值') && text.includes('user:old-slide'))).toBe(true)
+  })
+
+  it('the slide-interrupt toggle is disabled while 不播放 (default), checked from the config', async () => {
+    const { hub } = makeHub()
+    await render(hub)
+    const checkbox = slideInterruptCheckbox()
+    expect(checkbox.checked).toBe(true) // DEFAULT slideInterrupt: true
+    expect(checkbox.disabled).toBe(true) // slideAnimationId null = nothing to interrupt for
+  })
+
+  it('toggling slide interrupt schedules a debounced PUT carrying slideInterrupt', async () => {
+    const config = structuredClone(DEFAULT_CONFIG)
+    config.slideAnimationId = 'builtin:click-wiggle'
+    const { hub, seams } = makeHub(config)
+    await render(hub)
+    const checkbox = slideInterruptCheckbox()
+    expect(checkbox.disabled).toBe(false)
+    act(() => {
+      checkbox.click() // React binds checkbox onChange to click
+    })
+    expect(seams.sendConfig).not.toHaveBeenCalled() // still inside the debounce
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+    })
+    expect(seams.sendConfig).toHaveBeenCalledTimes(1)
+    const patch = seams.sendConfig.mock.calls[0]![0] as ThrowPhysicsPluginConfig
+    expect(patch.slideInterrupt).toBe(false)
+    expect(patch.slideAnimationId).toBe('builtin:click-wiggle') // full draft, not a fragment
   })
 
   it('the animation dropdown lists the default, main-plugin customs, builtins, and an unlisted current value', async () => {

@@ -168,6 +168,7 @@ interface HarnessOverrides {
   bounceAnimation?: Partial<BounceAnimationConfig>
   flashPose?: Partial<FlashPoseConfig>
   slideAnimationId?: string | null
+  slideInterrupt?: boolean
   sampleWindowMs?: number
   effectDebounceMs?: number
   applyFalseTolerance?: number
@@ -181,6 +182,7 @@ const makeHarness = (configOverrides: HarnessOverrides = {}): Harness => {
     effectDebounceMs: configOverrides.effectDebounceMs ?? DEFAULT_CONFIG.effectDebounceMs,
     applyFalseTolerance: configOverrides.applyFalseTolerance ?? DEFAULT_CONFIG.applyFalseTolerance,
     slideAnimationId: configOverrides.slideAnimationId ?? DEFAULT_CONFIG.slideAnimationId,
+    slideInterrupt: configOverrides.slideInterrupt ?? DEFAULT_CONFIG.slideInterrupt,
     physics: { ...DEFAULT_CONFIG.physics, ...(configOverrides.physics ?? {}) },
     bounceAnimation: { ...DEFAULT_CONFIG.bounceAnimation, ...(configOverrides.bounceAnimation ?? {}) },
     flashPose: { ...DEFAULT_CONFIG.flashPose, ...(configOverrides.flashPose ?? {}) },
@@ -478,6 +480,32 @@ describe('ground slide (minBounceHeightPx)', () => {
     await flushMicrotasks()
     expect(driver.commits).toBe(1)
     expect(h.service.plays).toEqual([]) // bounce disabled, slide unset: silent slide
+  })
+
+  it('passes the configured slideInterrupt to the slide animation (default true)', () => {
+    const h = makeHarness({ slideAnimationId: 'builtin:click-wiggle' })
+    performDrag(h, { x: 450, y: 100 }, { vx: 300, vy: 600 })
+    let frames = 0
+    while (!h.service.plays.some((play) => play.id === 'builtin:click-wiggle') && frames < 600) {
+      h.clock.value += 16
+      h.pumpFrames(1)
+      frames += 1
+    }
+    const slide = h.service.plays.find((play) => play.id === 'builtin:click-wiggle')
+    expect(slide?.options).toEqual({ interrupt: true })
+  })
+
+  it('passes slideInterrupt=false to the slide animation when configured', () => {
+    const h = makeHarness({ slideAnimationId: 'builtin:click-wiggle', slideInterrupt: false })
+    performDrag(h, { x: 450, y: 100 }, { vx: 300, vy: 600 })
+    let frames = 0
+    while (!h.service.plays.some((play) => play.id === 'builtin:click-wiggle') && frames < 600) {
+      h.clock.value += 16
+      h.pumpFrames(1)
+      frames += 1
+    }
+    const slide = h.service.plays.find((play) => play.id === 'builtin:click-wiggle')
+    expect(slide?.options).toEqual({ interrupt: false })
   })
 })
 

@@ -81,6 +81,15 @@ export interface PetweenClientService {
   ): unknown | null
   /** Swap the pose for holdMs then restore the state machine's pose. */
   flashPose(poseKey: string, holdMs: number): boolean
+  /**
+   * Force one config/animations fetch and resolve once the session applied
+   * it — closes the register→sync window (the 3s poll, unbounded while the
+   * page is hidden), so "registerAnimation then playAnimation" works on
+   * return. Resolves immediately without a session; a failed fetch resolves
+   * with the registry unchanged. A v1 additive widening (petween
+   * 2026-08-27): absent on older providers, hence optional — feature-check.
+   */
+  resyncAnimations?: () => Promise<void>
 }
 
 /**

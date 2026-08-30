@@ -83,6 +83,13 @@ export interface ThrowPhysicsPluginConfig {
    * play time through the main plugin's service.
    */
   slideAnimationId: string | null
+  /**
+   * Whether the one-shot slide animation preempts an in-flight animation
+   * when the slide begins (same semantics as bounceAnimation.interrupt).
+   * Default true keeps the original behavior; irrelevant while
+   * slideAnimationId is null.
+   */
+  slideInterrupt: boolean
   /** Drag-velocity sampling window (ms) ending at release. */
   sampleWindowMs: number
   /** Same-wall effect debounce (ms): corner jitter fires one effect, not a burst. */
@@ -101,6 +108,7 @@ export interface PhysicsConfigPatch {
   bounceAnimation?: Partial<BounceAnimationConfig>
   flashPose?: Partial<FlashPoseConfig>
   slideAnimationId?: string | null
+  slideInterrupt?: boolean
   sampleWindowMs?: number
   effectDebounceMs?: number
   applyFalseTolerance?: number
@@ -170,6 +178,7 @@ export const DEFAULT_CONFIG: ThrowPhysicsPluginConfig = {
     holdMs: 800,
   },
   slideAnimationId: null,
+  slideInterrupt: true,
   sampleWindowMs: 120,
   effectDebounceMs: 150,
   applyFalseTolerance: 2,

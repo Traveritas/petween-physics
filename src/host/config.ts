@@ -47,6 +47,7 @@ const PHYSICS_SECTION = 'physics'
 const BOUNCE_SECTION = 'bounceAnimation'
 const FLASH_SECTION = 'flashPose'
 const SLIDE_ANIMATION_FIELD = 'slideAnimationId'
+const SLIDE_INTERRUPT_FIELD = 'slideInterrupt'
 const TOP_LEVEL_NUMERIC = ['sampleWindowMs', 'effectDebounceMs', 'applyFalseTolerance'] as const
 type SectionKey = typeof PHYSICS_SECTION | typeof BOUNCE_SECTION | typeof FLASH_SECTION
 
@@ -170,6 +171,11 @@ function mergeConfig(patch: unknown, base: ThrowPhysicsPluginConfig, strict: boo
         continue
       }
       ;(merged as unknown as Target)[key] = value
+      continue
+    }
+    if (key === SLIDE_INTERRUPT_FIELD) {
+      // Boolean, like bounceAnimation.interrupt; absent on legacy files → default.
+      checkBoolean(key, value, merged as unknown as Target, key, issues)
       continue
     }
     if ((TOP_LEVEL_NUMERIC as readonly string[]).includes(key)) {

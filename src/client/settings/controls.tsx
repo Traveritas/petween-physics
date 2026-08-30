@@ -109,10 +109,24 @@ export function NumberField(props: {
   )
 }
 
-export function Toggle(props: { label: string; checked: boolean; onChange: (checked: boolean) => void }): JSX.Element {
+export function Toggle(props: {
+  label: string
+  checked: boolean
+  disabled?: boolean
+  onChange: (checked: boolean) => void
+}): JSX.Element {
   return (
-    <label className={`${styles.row} ${styles.toggle}`}>
-      <input type="checkbox" checked={props.checked} onChange={(event) => props.onChange(event.target.checked)} />
+    <label
+      className={
+        props.disabled === true ? `${styles.row} ${styles.toggle} ${styles.disabled}` : `${styles.row} ${styles.toggle}`
+      }
+    >
+      <input
+        type="checkbox"
+        checked={props.checked}
+        disabled={props.disabled}
+        onChange={(event) => props.onChange(event.target.checked)}
+      />
       <span>{props.label}</span>
     </label>
   )

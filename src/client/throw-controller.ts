@@ -259,7 +259,7 @@ export class ThrowController {
     // Slide entry (bounces fell below minBounceHeightPx): fire the optional
     // one-shot slide animation exactly once per flight, on the transition.
     if (!flight.state.sliding && result.state.sliding && config.slideAnimationId !== null) {
-      this.deps.service.playAnimation(config.slideAnimationId, { interrupt: true })
+      this.deps.service.playAnimation(config.slideAnimationId, { interrupt: config.slideInterrupt })
     }
     flight.state = result.state
 
