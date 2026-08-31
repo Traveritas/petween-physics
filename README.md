@@ -15,7 +15,7 @@
 
 ## 安装
 
-要求：已安装 DSH（`@deepseek-ai/dsh`，在 0.1.0-rc.7 上实测）、[主插件 petween](https://github.com/Traveritas/petween)（≥ 1.2.0，需先行安装）、Node ≥ 20 与 pnpm。
+要求：已安装 DSH（`@deepseek-ai/dsh`，在 0.1.0-rc.7 上实测）、[主插件 petween](https://github.com/Traveritas/petween)（≥ 1.2.0，需先行安装）、Node ≥ 22.18（构建工具链要求）与 pnpm。
 
 ```bash
 git clone https://github.com/Traveritas/petween-physics.git
