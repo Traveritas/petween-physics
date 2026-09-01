@@ -5,11 +5,13 @@
  * slot registration, the visibilitychange → settleIfHidden lease safety
  * net with its dispose-time cleanup, and the §12 shared pet-config pull
  * triggers (boot after hub load + active-pet change, both gated on a loaded
- * hub). The ThrowController, the config hub and the shared-config center are
+ * hub), plus the §12 P3 export-time config provider registration. The
+ * ThrowController, the config hub and the shared-config center are
  * mocked: the wiring, not them, is under test here.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
+import { DEFAULT_CONFIG, type ThrowPhysicsPluginConfig } from '../../src/client/config'
 import { apply } from '../../src/client/index'
 import type { PetweenClientService, StageSnapshot } from '../../src/client/types'
 
@@ -23,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   controllers: [] as FakeController[],
   hubLoad: vi.fn<() => Promise<unknown>>(async () => ({})),
   hubGetSnapshot: vi.fn(() => ({ loaded: false }) as { loaded: boolean }),
+  // Self-contained default: vi.hoisted runs before the imports above land.
+  hubGetConfig: vi.fn(() => ({ from: 'hub' }) as unknown as ThrowPhysicsPluginConfig),
   checkActivePet: vi.fn(),
 }))
 
@@ -39,15 +43,19 @@ vi.mock('../../src/client/throw-controller', () => ({
 vi.mock('../../src/client/config-hub', () => ({
   // PhysicsCard imports the class as a type; the mock still needs the binding.
   PhysicsConfigHub: class {},
-  physicsConfigHub: { load: mocks.hubLoad, getSnapshot: mocks.hubGetSnapshot },
+  physicsConfigHub: { load: mocks.hubLoad, getSnapshot: mocks.hubGetSnapshot, getConfig: mocks.hubGetConfig },
 }))
 
 vi.mock('../../src/client/shared-pet-config', () => ({
+  PLUGIN_ID: 'petween-physics',
   SharedPetConfigCenter: class {},
   sharedPetConfigCenter: { checkActivePet: mocks.checkActivePet },
 }))
 
-type FakeService = PetweenClientService & { resyncAnimations: Mock<() => Promise<void>> }
+type FakeService = PetweenClientService & {
+  resyncAnimations: Mock<() => Promise<void>>
+  registerSharedPluginConfigProvider: Mock<(pluginId: string, provider: () => unknown) => () => void>
+}
 
 const makeService = (): FakeService => ({
   version: 1,
@@ -58,6 +66,7 @@ const makeService = (): FakeService => ({
   playAnimation: vi.fn(() => null),
   flashPose: vi.fn(() => false),
   resyncAnimations: vi.fn(async () => {}),
+  registerSharedPluginConfigProvider: vi.fn(() => () => {}),
 })
 
 const makeCtx = (service: unknown) => {
@@ -79,6 +88,7 @@ describe('client entry apply()', () => {
     mocks.controllers.length = 0
     mocks.hubLoad.mockClear()
     mocks.hubGetSnapshot.mockReturnValue({ loaded: false })
+    mocks.hubGetConfig.mockReset().mockReturnValue({ from: 'hub' } as unknown as ThrowPhysicsPluginConfig)
     mocks.checkActivePet.mockClear()
   })
 
@@ -200,5 +210,83 @@ describe('client entry apply()', () => {
     if (dispose === undefined) throw new Error('apply returned no dispose')
     dispose()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('registers the §12 export config provider once the boot hub load lands; dispose unregisters', async () => {
+    mocks.hubGetSnapshot.mockReturnValue({ loaded: true })
+    const current = structuredClone(DEFAULT_CONFIG)
+    mocks.hubGetConfig.mockReturnValue(current)
+    const service = makeService()
+    const unregister = vi.fn()
+    service.registerSharedPluginConfigProvider.mockReturnValue(unregister)
+    const dispose = apply(makeCtx(service).ctx)
+    if (dispose === undefined) throw new Error('apply returned no dispose')
+    // Flush the hub.load().then(...) chain that performs the registration.
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(service.registerSharedPluginConfigProvider).toHaveBeenCalledTimes(1)
+    expect(service.registerSharedPluginConfigProvider).toHaveBeenCalledWith('petween-physics', expect.any(Function))
+    const provider = service.registerSharedPluginConfigProvider.mock.calls[0]![1]
+    const served = provider()
+    expect(served).toEqual(current)
+    expect(served).not.toBe(current) // a clone: export must not observe later live mutations
+
+    dispose()
+    expect(unregister).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays silent against an older provider without registerSharedPluginConfigProvider (optional widening)', async () => {
+    mocks.hubGetSnapshot.mockReturnValue({ loaded: true })
+    const service = makeService() as Partial<FakeService>
+    delete service.registerSharedPluginConfigProvider
+    const dispose = apply(makeCtx(service).ctx)
+    expect(typeof dispose).toBe('function')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(() => dispose!()).not.toThrow()
+  })
+
+  it('does not register the provider while the hub is not loaded (a failed boot load stays silent)', async () => {
+    // beforeEach default: hubGetSnapshot → { loaded: false }
+    const service = makeService()
+    apply(makeCtx(service).ctx)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(service.registerSharedPluginConfigProvider).not.toHaveBeenCalled()
+  })
+
+  it('a dispose before the boot load lands keeps the provider unregistered', async () => {
+    mocks.hubGetSnapshot.mockReturnValue({ loaded: true })
+    let resolveLoad!: (value: unknown) => void
+    // Once-only: later tests keep the hoisted default implementation.
+    mocks.hubLoad.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveLoad = resolve
+        }),
+    )
+    const service = makeService()
+    const dispose = apply(makeCtx(service).ctx)
+    if (dispose === undefined) throw new Error('apply returned no dispose')
+    dispose()
+    resolveLoad({})
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(service.registerSharedPluginConfigProvider).not.toHaveBeenCalled()
+  })
+
+  it('a throwing registerSharedPluginConfigProvider stays silent and does not break the boot pull', async () => {
+    mocks.hubGetSnapshot.mockReturnValue({ loaded: true })
+    const service = makeService()
+    service.registerSharedPluginConfigProvider.mockImplementation(() => {
+      throw new Error('broken provider method')
+    })
+    service.getStageSnapshot = vi.fn(() => ({ activePetId: 'pet-a' }) as unknown as StageSnapshot)
+    apply(makeCtx(service).ctx)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(service.registerSharedPluginConfigProvider).toHaveBeenCalledTimes(1)
+    expect(mocks.checkActivePet).toHaveBeenCalledWith('pet-a') // the pull survived
   })
 })

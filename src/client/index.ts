@@ -8,7 +8,9 @@
  *    half's /api/petween-physics/config persists it);
  * 3. the §12 pet-package pull: on boot and on active-pet change, offer a
  *    companion config shared through the pet record's pluginConfigs pocket
- *    (client/shared-pet-config.ts) for the card to confirm/apply.
+ *    (client/shared-pet-config.ts) for the card to confirm/apply;
+ * 4. the §12 pet-package P3 push: register an export-time config provider so
+ *    a pet whose record carries no stored blob still ships our current config.
  *
  * `inject` makes cordis load this entry only while the main plugin's service
  * and the shell's slot registry exist.
@@ -19,7 +21,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { physicsConfigHub } from './config-hub'
 import { PhysicsCard } from './settings/PhysicsCard'
-import { sharedPetConfigCenter } from './shared-pet-config'
+import { PLUGIN_ID, sharedPetConfigCenter } from './shared-pet-config'
 import { ThrowController } from './throw-controller'
 import { petweenClientServiceOf } from './types'
 
@@ -49,7 +51,31 @@ export function apply(ctx: ClientContext) {
     if (!physicsConfigHub.getSnapshot().loaded) return
     void sharedPetConfigCenter.checkActivePet(petId)
   }
-  void physicsConfigHub.load().then(() => checkSharedConfig(service.getStageSnapshot()?.activePetId))
+  // §12 pet-package P3: let the main plugin collect our CURRENT config at
+  // export time, so a pet whose record carries no stored blob still ships the
+  // full personality. Registration waits for the hub load — the provider must
+  // serve the REAL config, never the DEFAULT fallback — and the method is an
+  // optional widening (older providers lack it). Every gap stays silent.
+  // ThrowPhysicsPluginConfig is all public tunables, so the whole snapshot
+  // goes (cloned: the export must not observe later live mutations).
+  let disposed = false
+  let unregisterConfigProvider: (() => void) | null = null
+  const registerConfigProvider = (): void => {
+    if (disposed || unregisterConfigProvider !== null) return
+    if (service.registerSharedPluginConfigProvider === undefined) return
+    if (!physicsConfigHub.getSnapshot().loaded) return
+    try {
+      unregisterConfigProvider = service.registerSharedPluginConfigProvider(PLUGIN_ID, () =>
+        structuredClone(physicsConfigHub.getConfig()),
+      )
+    } catch {
+      /* a broken provider method must not break the boot pull below */
+    }
+  }
+  void physicsConfigHub.load().then(() => {
+    registerConfigProvider()
+    checkSharedConfig(service.getStageSnapshot()?.activePetId)
+  })
   const unsubscribeStage = service.subscribeStage((snapshot) => checkSharedConfig(snapshot?.activePetId))
   // Close the boot-time register→play window in one nudge: without it the
   // main plugin's animation registry only syncs on its 3s poll (unbounded
@@ -95,6 +121,8 @@ export function apply(ctx: ClientContext) {
     ),
   )
   return () => {
+    disposed = true
+    unregisterConfigProvider?.()
     document.removeEventListener('visibilitychange', onVisibilityChange)
     unsubscribeStage()
     disposeCard()

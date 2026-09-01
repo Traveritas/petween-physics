@@ -97,6 +97,16 @@ export interface PetweenClientService {
    * 2026-08-27): absent on older providers, hence optional — feature-check.
    */
   resyncAnimations?: () => Promise<void>
+  /**
+   * Register a config provider the main plugin calls at pet-package EXPORT
+   * time (§12 P3): a pet whose record carries no stored pluginConfigs blob
+   * for this plugin still ships the plugin's CURRENT config. The returned
+   * value is stored and forwarded opaquely — only public, shareable tunables
+   * belong in it (the §12 hygiene rule; secrets never do). A v1 additive
+   * widening: absent on older providers, hence optional — feature-check.
+   * Returns the unregister function (cordis dispose convention).
+   */
+  registerSharedPluginConfigProvider?: (pluginId: string, provider: () => unknown) => () => void
 }
 
 /**
