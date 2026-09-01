@@ -42,6 +42,13 @@ export interface StageSnapshot {
   poseKey?: string | null
   /** The visible pose-image box (viewport px, tighter than the square); null before the first pose. */
   bodyRect?: { x: number; y: number; width: number; height: number } | null
+  /**
+   * v1 additive widening (petween §12 pet packages, P2): the active pet's
+   * id — companions pull their pluginConfigs blob from GET
+   * /api/petween/pets/<id>. Absent on older providers; null when no pet is
+   * active (the config slice belongs to no preset).
+   */
+  activePetId?: string | null
 }
 
 /** Exclusive position lease handed out by requestPositionControl(). */

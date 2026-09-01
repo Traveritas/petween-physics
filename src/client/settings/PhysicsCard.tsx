@@ -25,6 +25,11 @@ import {
   type ThrowPhysicsPluginConfig,
 } from '../config'
 import { PhysicsConfigHub, physicsConfigHub } from '../config-hub'
+import {
+  SharedPetConfigCenter,
+  sharedPetConfigCenter,
+  type PendingSharedPetConfig,
+} from '../shared-pet-config'
 import { NumberField, SelectRow, Slider, Toggle } from './controls'
 import styles from './settings.module.css'
 
@@ -48,6 +53,38 @@ const BUILTIN_ANIMATIONS: ReadonlyArray<{ value: string; label: string }> = [
 
 const DEFAULT_ANIMATION_OPTION = { value: DEFAULT_CONFIG.bounceAnimation.id, label: '本插件默认 · Physics Bounce Pop' }
 
+/** Confirmation-summary labels for the §12 shared-config banner, keyed by dotted config path. */
+const CHANGE_LABELS: Record<string, string> = {
+  'physics.gravity': '重力加速度',
+  'physics.restitution': '弹性系数',
+  'physics.friction': '水平阻尼',
+  'physics.throwMultiplier': '甩出倍率',
+  'physics.minThrowSpeed': '最低起掷速度',
+  'physics.settleSpeed': '落定速度',
+  'physics.maxSpeed': '速度上限',
+  'physics.maxFlightMs': '飞行兜底时长',
+  'physics.minBounceHeightPx': '最小反弹高度',
+  'physics.groundFriction': '地面摩擦',
+  'bounceAnimation.enabled': '碰壁时播放动画',
+  'bounceAnimation.id': '碰壁动画',
+  'bounceAnimation.interrupt': '碰壁动画打断在播',
+  'flashPose.enabled': '碰壁时切换图片',
+  'flashPose.poseKey': '碰壁切图 Pose',
+  'flashPose.holdMs': '切图保持时长',
+  slideAnimationId: '滑动动画',
+  slideInterrupt: '滑动动画打断',
+  sampleWindowMs: '测速窗口',
+  effectDebounceMs: '去抖窗口',
+  applyFalseTolerance: 'apply 容忍',
+}
+
+/** slideAnimationId is the only nullable field; booleans read as switches. */
+const formatChangeValue = (value: unknown): string => {
+  if (value === null || value === undefined) return '不播放'
+  if (typeof value === 'boolean') return value ? '开' : '关'
+  return String(value)
+}
+
 const POSE_OPTIONS = POSE_KEYS.map((key) => ({
   value: key,
   label: { idle: '待机 idle', thinking: '思考 thinking', working: '工作 working', waiting: '等待 waiting', success: '成功 success', error: '出错 error' }[key],
@@ -58,16 +95,22 @@ export interface PhysicsCardProps {
   hub?: PhysicsConfigHub
   /** Test seam for the main-plugin animation library read. */
   fetchAnimations?: () => Promise<{ customs: AnimationOption[]; warnings: string[] }>
+  /** Test seam; production shares the center with the client entry's pull triggers. */
+  sharedCenter?: SharedPetConfigCenter
 }
 
 export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   const hub = props.hub ?? physicsConfigHub
   const fetchAnimations = props.fetchAnimations ?? getPetweenAnimations
+  const sharedCenter = props.sharedCenter ?? sharedPetConfigCenter
   // Stable identities for useSyncExternalStore (prototype methods passed bare
   // would lose `this`; a fresh arrow per render would re-subscribe every render).
   const subscribe = useCallback((listener: () => void) => hub.subscribe(listener), [hub])
   const getSnapshot = useCallback(() => hub.getSnapshot(), [hub])
   const snapshot = useSyncExternalStore(subscribe, getSnapshot)
+  const subscribeShared = useCallback((listener: () => void) => sharedCenter.subscribe(listener), [sharedCenter])
+  const getSharedSnapshot = useCallback(() => sharedCenter.getSnapshot(), [sharedCenter])
+  const pendingShare = useSyncExternalStore(subscribeShared, getSharedSnapshot)
 
   // The UI draft: adopted from the hub once the first GET lands (or from the
   // silent DEFAULT fallback on load failure), then owned by the controls.
@@ -197,6 +240,27 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
     void hub.reset()
   }
 
+  /**
+   * Apply a §12 shared config offer: PUT the remapped blob verbatim (the
+   * host merges + re-validates), then adopt the server-merged config as the
+   * new draft. A queued debounced edit belongs to the pre-share draft — it
+   * is dropped so it cannot clobber the shared values after the PUT lands.
+   * A failed PUT keeps the offer on screen (the header shows saveError).
+   */
+  const applySharedConfig = async (offer: PendingSharedPetConfig): Promise<void> => {
+    if (saveTimer.current !== null) {
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    pendingDraft.current = null
+    setPending(false)
+    await hub.update(offer.patch)
+    if (hub.getSnapshot().saveError !== null) return
+    fallbackDraft.current = false // the server config is real state, not a fallback
+    setDraft(structuredClone(hub.getSnapshot().config))
+    sharedCenter.dismiss(offer)
+  }
+
   // Animation options: default + custom library + builtins, plus the current
   // value when nothing lists it (e.g. a hand-typed id kept from old config).
   // The custom library is filtered to one-shot interaction animations — both
@@ -257,6 +321,33 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
             重试
           </button>
         </p>
+      ) : null}
+
+      {pendingShare !== null ? (
+        <div className={styles.shareBanner}>
+          <span className={styles.shareTitle}>宠物「{pendingShare.petName}」分享了物理配置</span>
+          <ul className={styles.shareList}>
+            {pendingShare.changes.map((change) => (
+              <li key={change.path}>
+                {CHANGE_LABELS[change.path] ?? change.path}:{formatChangeValue(change.from)} →{' '}
+                {formatChangeValue(change.to)}
+              </li>
+            ))}
+          </ul>
+          <div className={styles.shareActions}>
+            <button
+              type="button"
+              className={styles.button}
+              disabled={snapshot.saving}
+              onClick={() => void applySharedConfig(pendingShare)}
+            >
+              应用
+            </button>
+            <button type="button" className={styles.button} onClick={() => sharedCenter.dismiss(pendingShare)}>
+              忽略
+            </button>
+          </div>
+        </div>
       ) : null}
 
       <div className={styles.groupTitle}>物理</div>

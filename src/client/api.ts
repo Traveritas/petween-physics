@@ -10,11 +10,14 @@
  * - PUT /api/petween-physics/config → { config } | 400 INVALID_CONFIG
  * - GET /api/petween/animations     → { customs, warnings } (main plugin,
  *   read-only; failures degrade to the hardcoded builtin list)
+ * - GET /api/petween/pets/<id>      → { pet } (main plugin, read-only; the
+ *   §12 pet-package pluginConfigs pocket lives on the pet record)
  */
 import type { PhysicsConfigPatch, ThrowPhysicsPluginConfig } from './config'
 
 const CONFIG_URL = '/api/petween-physics/config'
 const PETWEEN_ANIMATIONS_URL = '/api/petween/animations'
+const PETWEEN_PETS_URL = '/api/petween/pets'
 
 export class ApiError extends Error {
   override readonly name = 'ApiError'
@@ -120,5 +123,57 @@ export async function getPetweenAnimations(): Promise<{ customs: AnimationOption
       repeatMode: typeof custom.repeat?.mode === 'string' ? custom.repeat.mode : '',
     })),
     warnings: body.warnings ?? [],
+  }
+}
+
+/**
+ * This plugin's pocket of a pet record's §12 pluginConfigs: an opaque config
+ * blob plus the import-time animation-id remap (requestedId → finalId; the
+ * main plugin injects the map but never rewrites the blob — that is our job
+ * at apply time, see client/shared-pet-config.ts).
+ */
+export interface PetPluginConfigShare {
+  /** The sharing pet's display name (for the confirmation banner). */
+  petName: string
+  config: unknown
+  animationIdRemap?: Record<string, string>
+}
+
+/** What GET /api/petween/pets/<id> answers; parsed defensively — an older main plugin has no pluginConfigs at all. */
+interface PetResponse {
+  pet?: {
+    name?: unknown
+    pluginConfigs?: unknown
+  }
+}
+
+/** Keep only string→string pairs of a defensively-read remap. */
+function sanitizeRemap(raw: unknown): Record<string, string> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
+  const remap: Record<string, string> = {}
+  for (const [from, to] of Object.entries(raw)) {
+    if (typeof to === 'string') remap[from] = to
+  }
+  return Object.keys(remap).length > 0 ? remap : undefined
+}
+
+/**
+ * Read this plugin's pluginConfigs pocket off a pet record (main plugin,
+ * read-only; GETs carry no cross-origin fence). Returns null when the pocket
+ * or the whole field is absent (pet without a blob, older main plugin) — an
+ * HTTP/network failure still throws for the caller to swallow silently.
+ */
+export async function getPetPluginConfigShare(petId: string, pluginId: string): Promise<PetPluginConfigShare | null> {
+  const body = await request<PetResponse>(`${PETWEEN_PETS_URL}/${encodeURIComponent(petId)}`)
+  const pet = body.pet
+  if (pet === undefined || typeof pet.pluginConfigs !== 'object' || pet.pluginConfigs === null) return null
+  const raw = (pet.pluginConfigs as Record<string, unknown>)[pluginId]
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw) || !('config' in raw)) return null
+  const entry = raw as { config: unknown; animationIdRemap?: unknown }
+  const remap = sanitizeRemap(entry.animationIdRemap)
+  return {
+    petName: typeof pet.name === 'string' && pet.name !== '' ? pet.name : petId,
+    config: entry.config,
+    ...(remap === undefined ? {} : { animationIdRemap: remap }),
   }
 }

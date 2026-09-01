@@ -153,6 +153,36 @@
   padding: 4px 0;
 }
 
+/* --- shared pet-package config offer (§12 pluginConfigs) --- */
+
+.shareBanner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, #d1d5db);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, #f9fafb);
+}
+
+.shareTitle {
+  font-weight: 600;
+}
+
+.shareList {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+}
+
+.shareActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 /* --- footer --- */
 
 .cardFooter {

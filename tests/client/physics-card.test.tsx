@@ -6,12 +6,14 @@
  * the real config into an untouched fallback draft), and the
  * impact-animation dropdown sources (default + main-plugin customs + builtins
  * + the current unlisted value, in BOTH dropdowns), plus the slide-interrupt
- * toggle (disabled while 不播放; saves through the same debounce).
+ * toggle (disabled while 不播放; saves through the same debounce) and the §12
+ * shared pet-config banner (summary render / 应用 applies + refreshes the
+ * draft / 忽略 dismisses without saving / invalid blobs never show).
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
-import type { AnimationOption } from '../../src/client/api'
+import type { AnimationOption, PetPluginConfigShare } from '../../src/client/api'
 import {
   DEFAULT_CONFIG,
   type PhysicsConfigPatch,
@@ -19,6 +21,7 @@ import {
 } from '../../src/client/config'
 import { PhysicsConfigHub } from '../../src/client/config-hub'
 import { PhysicsCard } from '../../src/client/settings/PhysicsCard'
+import { SharedPetConfigCenter } from '../../src/client/shared-pet-config'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -64,11 +67,39 @@ const makeHub = (
   return { hub: new PhysicsConfigHub(seams), seams }
 }
 
-const render = async (hub: PhysicsConfigHub, customs: AnimationOption[] = []): Promise<void> => {
+const render = async (
+  hub: PhysicsConfigHub,
+  customs: AnimationOption[] = [],
+  sharedCenter?: SharedPetConfigCenter,
+): Promise<void> => {
   const fetchAnimations = vi.fn(async () => ({ customs, warnings: [] }))
   await act(async () => {
-    root.render(<PhysicsCard hub={hub} fetchAnimations={fetchAnimations} />)
+    root.render(<PhysicsCard hub={hub} fetchAnimations={fetchAnimations} sharedCenter={sharedCenter} />)
   })
+}
+
+/**
+ * A SharedPetConfigCenter on test seams: the pull always answers `share`, the
+ * current config comes from the rendered hub, and the handled-key bookkeeping
+ * lands in an in-memory map instead of localStorage.
+ */
+const makeCenter = (
+  share: PetPluginConfigShare | null,
+  hub: PhysicsConfigHub,
+): { center: SharedPetConfigCenter; fetchShare: Mock<(petId: string) => Promise<PetPluginConfigShare | null>> } => {
+  const storageMap = new Map<string, string>()
+  const fetchShare = vi.fn(async () => share)
+  const center = new SharedPetConfigCenter({
+    fetchShare,
+    getConfig: () => hub.getSnapshot().config,
+    storage: {
+      getItem: (key: string) => storageMap.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storageMap.set(key, value)
+      },
+    },
+  })
+  return { center, fetchShare }
 }
 
 /** React reads controlled inputs through the native setter + 'input' event. */
@@ -429,5 +460,71 @@ describe('PhysicsCard', () => {
     const options = [...animationSelect.options].map((option) => option.textContent ?? '')
     expect(options.some((text) => text.includes('本插件默认'))).toBe(true)
     expect(options.some((text) => text.includes('click-pop'))).toBe(true)
+  })
+
+  it('shows the §12 shared-config banner with a change summary; 应用 PUTs the blob and refreshes the draft', async () => {
+    const { hub, seams } = makeHub()
+    const share: PetPluginConfigShare = {
+      petName: '女仆',
+      config: { physics: { gravity: 5000, restitution: 0.9 }, slideAnimationId: 'builtin:click-wiggle' },
+    }
+    const { center } = makeCenter(share, hub)
+    await render(hub, [], center)
+    await act(async () => {
+      await center.checkActivePet('pet-1')
+    })
+
+    expect(container.textContent).toContain('宠物「女仆」分享了物理配置')
+    expect(container.textContent).toContain('重力加速度:3000 → 5000')
+    expect(container.textContent).toContain('弹性系数:0.6 → 0.9')
+    expect(container.textContent).toContain('滑动动画:不播放 → builtin:click-wiggle')
+    expect(seams.sendConfig).not.toHaveBeenCalled() // nothing before the user confirms
+
+    await act(async () => {
+      findButton('应用').click()
+    })
+    expect(seams.sendConfig).toHaveBeenCalledTimes(1)
+    const patch = seams.sendConfig.mock.calls[0]![0] as PhysicsConfigPatch
+    expect(patch.physics).toEqual({ gravity: 5000, restitution: 0.9 }) // the blob verbatim, host merges
+    expect(patch.slideAnimationId).toBe('builtin:click-wiggle')
+    expect(container.textContent).not.toContain('分享了物理配置') // dismissed after a successful apply
+    expect(gravityInput().value).toBe('5000') // the draft adopted the server-merged config
+  })
+
+  it('忽略 dismisses the offer without saving, and the same blob never re-prompts', async () => {
+    const { hub, seams } = makeHub()
+    const share: PetPluginConfigShare = { petName: '女仆', config: { physics: { gravity: 5000 } } }
+    const { center, fetchShare } = makeCenter(share, hub)
+    await render(hub, [], center)
+    await act(async () => {
+      await center.checkActivePet('pet-1')
+    })
+    expect(container.textContent).toContain('分享了物理配置')
+
+    await act(async () => {
+      findButton('忽略').click()
+    })
+    expect(seams.sendConfig).not.toHaveBeenCalled()
+    expect(container.textContent).not.toContain('分享了物理配置')
+
+    // A different pet carrying the SAME content: the handled key still silences it.
+    await act(async () => {
+      await center.checkActivePet('pet-2')
+    })
+    expect(fetchShare).toHaveBeenCalledTimes(2)
+    expect(container.textContent).not.toContain('分享了物理配置')
+  })
+
+  it('an invalid shared blob never reaches the banner (nothing to apply, no PUT)', async () => {
+    const { hub, seams } = makeHub()
+    // gravity 5 is below the CONFIG_NUMERIC_FIELDS minimum of 100.
+    const { center } = makeCenter({ petName: '坏包', config: { physics: { gravity: 5 } } }, hub)
+    await render(hub, [], center)
+    await act(async () => {
+      await center.checkActivePet('pet-1')
+    })
+    expect(center.getSnapshot()).toBeNull()
+    expect(container.textContent).not.toContain('分享了物理配置')
+    expect(seams.sendConfig).not.toHaveBeenCalled()
   })
 })

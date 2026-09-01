@@ -2,14 +2,16 @@
 /**
  * Client entry tests: the cordis apply() wiring — the petween/client service
  * version guard, the boot-time resyncAnimations nudge, the settings.section
- * slot registration, and the visibilitychange → settleIfHidden lease safety
- * net with its dispose-time cleanup. The ThrowController and the config hub
- * are mocked: the wiring, not the controller, is under test here.
+ * slot registration, the visibilitychange → settleIfHidden lease safety
+ * net with its dispose-time cleanup, and the §12 shared pet-config pull
+ * triggers (boot after hub load + active-pet change, both gated on a loaded
+ * hub). The ThrowController, the config hub and the shared-config center are
+ * mocked: the wiring, not them, is under test here.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { apply } from '../../src/client/index'
-import type { PetweenClientService } from '../../src/client/types'
+import type { PetweenClientService, StageSnapshot } from '../../src/client/types'
 
 interface FakeController {
   settleIfHidden: Mock<() => void>
@@ -20,6 +22,8 @@ interface FakeController {
 const mocks = vi.hoisted(() => ({
   controllers: [] as FakeController[],
   hubLoad: vi.fn<() => Promise<unknown>>(async () => ({})),
+  hubGetSnapshot: vi.fn(() => ({ loaded: false }) as { loaded: boolean }),
+  checkActivePet: vi.fn(),
 }))
 
 vi.mock('../../src/client/throw-controller', () => ({
@@ -35,7 +39,12 @@ vi.mock('../../src/client/throw-controller', () => ({
 vi.mock('../../src/client/config-hub', () => ({
   // PhysicsCard imports the class as a type; the mock still needs the binding.
   PhysicsConfigHub: class {},
-  physicsConfigHub: { load: mocks.hubLoad },
+  physicsConfigHub: { load: mocks.hubLoad, getSnapshot: mocks.hubGetSnapshot },
+}))
+
+vi.mock('../../src/client/shared-pet-config', () => ({
+  SharedPetConfigCenter: class {},
+  sharedPetConfigCenter: { checkActivePet: mocks.checkActivePet },
 }))
 
 type FakeService = PetweenClientService & { resyncAnimations: Mock<() => Promise<void>> }
@@ -69,6 +78,8 @@ describe('client entry apply()', () => {
   beforeEach(() => {
     mocks.controllers.length = 0
     mocks.hubLoad.mockClear()
+    mocks.hubGetSnapshot.mockReturnValue({ loaded: false })
+    mocks.checkActivePet.mockClear()
   })
 
   it('boots the controller, shares one hub load, nudges resyncAnimations once, registers the settings card', () => {
@@ -135,5 +146,59 @@ describe('client entry apply()', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+
+  it('pulls the shared pet config once after the boot hub load (the boot activePetId)', async () => {
+    mocks.hubGetSnapshot.mockReturnValue({ loaded: true })
+    const service = makeService()
+    service.getStageSnapshot = vi.fn(() => ({ activePetId: 'pet-a' }) as unknown as StageSnapshot)
+    apply(makeCtx(service).ctx)
+    // Flush the hub.load().then(...) chain that issues the boot pull.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mocks.checkActivePet).toHaveBeenCalledTimes(1)
+    expect(mocks.checkActivePet).toHaveBeenCalledWith('pet-a')
+  })
+
+  it('re-pulls when the stage subscription reports a new active pet; undefined/null stay silent', () => {
+    mocks.hubGetSnapshot.mockReturnValue({ loaded: true })
+    const service = makeService()
+    let stageListener: ((snapshot: StageSnapshot | null) => void) | undefined
+    service.subscribeStage = vi.fn((listener: (snapshot: StageSnapshot | null) => void) => {
+      stageListener = listener
+      return () => {}
+    })
+    apply(makeCtx(service).ctx)
+    if (stageListener === undefined) throw new Error('stage listener not registered')
+    const push = stageListener
+
+    push({ activePetId: 'pet-b' } as unknown as StageSnapshot) // active pet changed
+    expect(mocks.checkActivePet).toHaveBeenCalledTimes(1)
+    expect(mocks.checkActivePet).toHaveBeenCalledWith('pet-b')
+
+    push({ activePetId: null } as unknown as StageSnapshot) // no active pet
+    push({} as unknown as StageSnapshot) // provider predates the additive field
+    push(null) // no session
+    expect(mocks.checkActivePet).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not pull before the hub load lands (the DEFAULT fallback must not drive the no-op check)', async () => {
+    // beforeEach default: hubGetSnapshot → { loaded: false }
+    const service = makeService()
+    service.getStageSnapshot = vi.fn(() => ({ activePetId: 'pet-a' }) as unknown as StageSnapshot)
+    apply(makeCtx(service).ctx)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mocks.checkActivePet).not.toHaveBeenCalled()
+  })
+
+  it('dispose unsubscribes the stage watcher', () => {
+    const service = makeService()
+    const unsubscribe = vi.fn()
+    service.subscribeStage = vi.fn(() => unsubscribe)
+    const dispose = apply(makeCtx(service).ctx)
+    if (dispose === undefined) throw new Error('apply returned no dispose')
+    dispose()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
 })

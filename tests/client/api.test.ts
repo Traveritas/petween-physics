@@ -5,7 +5,7 @@
  * metadata is missing).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getPetweenAnimations } from '../../src/client/api'
+import { getPetPluginConfigShare, getPetweenAnimations } from '../../src/client/api'
 
 const okResponse = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -51,5 +51,74 @@ describe('getPetweenAnimations', () => {
     const { customs } = await getPetweenAnimations()
 
     expect(customs).toEqual([{ id: 'user:legacy', name: 'Legacy', kind: '', repeatMode: '' }])
+  })
+})
+
+describe('getPetPluginConfigShare', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reads this plugin’s pocket off the pet record, sanitizing the remap', async () => {
+    const fetchMock = vi.fn(async () =>
+      okResponse({
+        pet: {
+          id: 'pet-1',
+          name: '女仆',
+          pluginConfigs: {
+            'petween-physics': {
+              config: { physics: { gravity: 5000 }, slideAnimationId: 'user:old' },
+              animationIdRemap: { 'user:old': 'user:new', 'user:bad': 42 }, // non-string values drop out
+            },
+            'some-other-plugin': { config: { not: 'ours' } },
+          },
+        },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const share = await getPetPluginConfigShare('pet-1', 'petween-physics')
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/petween/pets/pet-1', undefined)
+    expect(share).toEqual({
+      petName: '女仆',
+      config: { physics: { gravity: 5000 }, slideAnimationId: 'user:old' },
+      animationIdRemap: { 'user:old': 'user:new' },
+    })
+  })
+
+  it('returns null when the pet record has no pluginConfigs field at all (old main plugin)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => okResponse({ pet: { id: 'pet-1', name: 'Legacy Pet' } })),
+    )
+    expect(await getPetPluginConfigShare('pet-1', 'petween-physics')).toBeNull()
+  })
+
+  it('returns null when our pocket is absent or malformed (no config field)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        okResponse({
+          pet: {
+            name: 'P',
+            pluginConfigs: { 'petween-physics': { animationIdRemap: { a: 'b' } } }, // no config
+          },
+        }),
+      ),
+    )
+    expect(await getPetPluginConfigShare('pet-1', 'petween-physics')).toBeNull()
+  })
+
+  it('falls back to the pet id when the record has no usable name', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        okResponse({ pet: { pluginConfigs: { 'petween-physics': { config: { physics: { gravity: 5000 } } } } } }),
+      ),
+    )
+    const share = await getPetPluginConfigShare('pet-1', 'petween-physics')
+    expect(share?.petName).toBe('pet-1')
+    expect(share?.animationIdRemap).toBeUndefined() // absent remap stays absent
   })
 })

@@ -5,7 +5,10 @@
  *    it to the browser environment, read the LATEST config from the hub at
  *    use time (per gesture / per frame);
  * 2. the settings.section card that edits the config at runtime (the host
- *    half's /api/petween-physics/config persists it).
+ *    half's /api/petween-physics/config persists it);
+ * 3. the §12 pet-package pull: on boot and on active-pet change, offer a
+ *    companion config shared through the pet record's pluginConfigs pocket
+ *    (client/shared-pet-config.ts) for the card to confirm/apply.
  *
  * `inject` makes cordis load this entry only while the main plugin's service
  * and the shell's slot registry exist.
@@ -16,6 +19,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { physicsConfigHub } from './config-hub'
 import { PhysicsCard } from './settings/PhysicsCard'
+import { sharedPetConfigCenter } from './shared-pet-config'
 import { ThrowController } from './throw-controller'
 import { petweenClientServiceOf } from './types'
 
@@ -31,8 +35,22 @@ export function apply(ctx: ClientContext) {
   }
   // One memoized GET serves the controller AND the card; until it lands (or
   // if it fails) the controller runs on DEFAULT_CONFIG — the hub broadcast is
-  // irrelevant to it because it reads getConfig() at use time.
-  void physicsConfigHub.load()
+  // irrelevant to it because it reads getConfig() at use time. The boot-time
+  // §12 shared-config pull rides the SAME load (see below).
+  //
+  // §12 pet-package pull: offer a companion config shared through the pet
+  // record once per boot (only AFTER the hub load, so the center's no-op
+  // check compares against the REAL config, not the DEFAULT fallback) and
+  // again whenever the active pet changes. StageSnapshot.activePetId is an
+  // optional v1 widening — old providers lack it, and every gap here stays
+  // silent by design (the center additionally dedupes repeat pet ids).
+  const checkSharedConfig = (petId: string | null | undefined): void => {
+    if (typeof petId !== 'string' || petId === '') return
+    if (!physicsConfigHub.getSnapshot().loaded) return
+    void sharedPetConfigCenter.checkActivePet(petId)
+  }
+  void physicsConfigHub.load().then(() => checkSharedConfig(service.getStageSnapshot()?.activePetId))
+  const unsubscribeStage = service.subscribeStage((snapshot) => checkSharedConfig(snapshot?.activePetId))
   // Close the boot-time register→play window in one nudge: without it the
   // main plugin's animation registry only syncs on its 3s poll (unbounded
   // while the page is hidden). Optional in the v1 mirror — older providers
@@ -78,6 +96,7 @@ export function apply(ctx: ClientContext) {
   )
   return () => {
     document.removeEventListener('visibilitychange', onVisibilityChange)
+    unsubscribeStage()
     disposeCard()
     controller.dispose()
   }
