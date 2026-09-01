@@ -183,9 +183,9 @@ const makeHarness = (configOverrides: HarnessOverrides = {}): Harness => {
     applyFalseTolerance: configOverrides.applyFalseTolerance ?? DEFAULT_CONFIG.applyFalseTolerance,
     slideAnimationId: configOverrides.slideAnimationId ?? DEFAULT_CONFIG.slideAnimationId,
     slideInterrupt: configOverrides.slideInterrupt ?? DEFAULT_CONFIG.slideInterrupt,
-    physics: { ...DEFAULT_CONFIG.physics, ...(configOverrides.physics ?? {}) },
-    bounceAnimation: { ...DEFAULT_CONFIG.bounceAnimation, ...(configOverrides.bounceAnimation ?? {}) },
-    flashPose: { ...DEFAULT_CONFIG.flashPose, ...(configOverrides.flashPose ?? {}) },
+    physics: { ...DEFAULT_CONFIG.physics, ...configOverrides.physics },
+    bounceAnimation: { ...DEFAULT_CONFIG.bounceAnimation, ...configOverrides.bounceAnimation },
+    flashPose: { ...DEFAULT_CONFIG.flashPose, ...configOverrides.flashPose },
   }
   const clock = { value: 0 }
   const hidden = { value: false }

@@ -12,7 +12,10 @@
  *   load falls back silently to defaults and only surfaces its error state).
  * - `update(patch)` — PUT + broadcast the merged config on success; a failed
  *   save sets `saveError` for the card to show without touching the last
- *   known-good config.
+ *   known-good config. Concurrent saves are latest-wins: only the response
+ *   of the most recently issued update may write the snapshot, so a slow
+ *   older save can never clobber a newer one (the host already serializes
+ *   writes per session; this guards the local snapshot).
  *
  * Pure TS, no React/DSH. The default singleton {@link physicsConfigHub} is
  * what the client entry shares; tests construct their own with injected
@@ -58,6 +61,8 @@ export class PhysicsConfigHub {
   private readonly listeners = new Set<PhysicsConfigListener>()
   private snapshot: PhysicsHubSnapshot = initialSnapshot()
   private loadPromise: Promise<PhysicsHubSnapshot> | null = null
+  /** Bumped per update(); only the newest issued save may write the snapshot. */
+  private updateSeq = 0
 
   constructor(options: PhysicsConfigHubOptions = {}) {
     this.fetchConfig = options.fetchConfig ?? getPhysicsConfig
@@ -120,13 +125,21 @@ export class PhysicsConfigHub {
    * local one and is broadcast (clone: later caller mutations cannot leak
    * into subscribers). On failure only `saveError` changes — the last
    * known-good config stands.
+   *
+   * Overlapping saves are latest-wins: a response whose update has since
+   * been superseded by a newer one is dropped entirely (config, `saving`,
+   * and `saveError` all stay owned by the newest in-flight save), so slow
+   * saves completing out of order cannot roll the snapshot back.
    */
   async update(patch: PhysicsConfigPatch): Promise<void> {
+    const seq = ++this.updateSeq
     this.set({ saving: true, saveError: null })
     try {
       const { config } = await this.sendConfig(patch)
+      if (seq !== this.updateSeq) return
       this.set({ config: structuredClone(config), loaded: true, loadError: null, saving: false, saveError: null })
     } catch (error) {
+      if (seq !== this.updateSeq) return
       this.set({ saving: false, saveError: error instanceof Error ? error.message : String(error) })
     }
   }

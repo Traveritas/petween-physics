@@ -17,6 +17,17 @@ const configWith = (overrides: {
   physics: { ...DEFAULT_CONFIG.physics, gravity: overrides.gravity ?? DEFAULT_CONFIG.physics.gravity },
 })
 
+/** A manually settled promise, for exact control over save completion order. */
+const deferred = <T>() => {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 describe('load()', () => {
   it('fetches once and caches: concurrent callers share one GET', async () => {
     const fetchConfig = vi.fn(async () => ({ config: configWith({ gravity: 5000 }) }))
@@ -136,5 +147,59 @@ describe('update()', () => {
     await hub.reset()
     expect(sendConfig).toHaveBeenCalledWith(structuredClone(DEFAULT_CONFIG))
     expect(hub.getConfig()).toEqual(DEFAULT_CONFIG)
+  })
+
+  it('overlapping saves are latest-wins: an older save completing last never rolls the snapshot back', async () => {
+    const first = deferred<{ config: ThrowPhysicsPluginConfig }>()
+    const second = deferred<{ config: ThrowPhysicsPluginConfig }>()
+    const sendConfig = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    const hub = new PhysicsConfigHub({
+      fetchConfig: async () => ({ config: configWith({ gravity: 5000 }) }),
+      sendConfig,
+    })
+    await hub.load()
+    const stale = hub.update({ physics: { gravity: 7000 } })
+    const fresh = hub.update({ physics: { gravity: 9000 } })
+    // The newer save lands first and takes ownership of the snapshot.
+    second.resolve({ config: configWith({ gravity: 9000 }) })
+    await fresh
+    expect(hub.getConfig().physics.gravity).toBe(9000)
+    expect(hub.getSnapshot().saving).toBe(false)
+    // The older save completes afterwards: its response is dropped whole —
+    // config, saving and saveError stay as the newer save left them.
+    first.resolve({ config: configWith({ gravity: 7000 }) })
+    await stale
+    expect(hub.getConfig().physics.gravity).toBe(9000)
+    expect(hub.getSnapshot()).toMatchObject({ saving: false, saveError: null })
+  })
+
+  it('overlapping saves completing in issue order are unaffected (latest data still wins)', async () => {
+    const first = deferred<{ config: ThrowPhysicsPluginConfig }>()
+    const second = deferred<{ config: ThrowPhysicsPluginConfig }>()
+    const sendConfig = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+    const hub = new PhysicsConfigHub({
+      fetchConfig: async () => ({ config: configWith({ gravity: 5000 }) }),
+      sendConfig,
+    })
+    await hub.load()
+    const stale = hub.update({ physics: { gravity: 7000 } })
+    const fresh = hub.update({ physics: { gravity: 9000 } })
+    // In-order completion: the first response is already superseded when it
+    // lands (the second save is in flight), so `saving` stays true and the
+    // intermediate config is skipped rather than flashed.
+    first.resolve({ config: configWith({ gravity: 7000 }) })
+    await stale
+    expect(hub.getConfig().physics.gravity).toBe(5000)
+    expect(hub.getSnapshot().saving).toBe(true)
+    second.resolve({ config: configWith({ gravity: 9000 }) })
+    await fresh
+    expect(hub.getConfig().physics.gravity).toBe(9000)
+    expect(hub.getSnapshot()).toMatchObject({ saving: false, saveError: null })
   })
 })
