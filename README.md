@@ -124,3 +124,25 @@ pnpm run build     # lib/index.js (host ESM) + lib/client.js (__ModuleLoader__ �
 ## License
 
 MIT
+
+## Desktop 宿主形态（Petween Desktop）
+
+本插件是**双宿主**的：除 DSH 插件形态外，`src/desktop/index.ts` 提供桌面伴生入口（`createPhysicsDesktopCompanion()`），由 [Petween Desktop](https://github.com/Traveritas/petween-desktop)（Electron 壳）经 companion 注册表挂载。桌面壳负责：伺服 `/api/petween-physics/config`（host 半注册进它的 local-server，数据根注入到 `userData`）、在设置页托管 `PhysicsCard`、提供 petween host service 供默认撞击动画注册。
+
+**给伴生插件作者的三条纪律**（保证一个插件两种宿主零分叉）：
+
+1. **服务获取收单缝**：不要在行为代码里碰 cordis ctx；服务对象从入口的 init context 拿（DSH 形态经 `petweenClientServiceOf(ctx)`，桌面形态由壳直接传入单例）。
+2. **HTTP 全根相对**：两种宿主都同源伺服你的 host 路由与 petween API，根相对 fetch 天然通用。
+3. **行为类与入口分离**：运行时行为（如 `ThrowController`）只依赖服务接口 + 注入的环境缝（时钟/视口/rAF/可见性），环境缝在各自入口里接线。
+
+桌面伴生契约（结构镜像，无需依赖桌面壳包）：
+
+```ts
+interface DesktopCompanion {
+  id: string
+  displayName: string
+  description?: string
+  SettingsCard?: React.ComponentType   // 可选：桌面设置页托管的配置卡
+  init(ctx: { petween: PetweenClientService }): (() => void) | void
+}
+```

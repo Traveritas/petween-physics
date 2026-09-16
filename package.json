@@ -32,14 +32,19 @@
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./desktop": {
+      "types": "./lib/types/desktop/index.d.ts",
+      "default": "./lib/desktop.js"
+    }
   },
   "files": [
     "lib/index.js",
     "lib/client.js",
     "lib/client.js.map",
     "lib/types",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "lib/desktop.js"
   ],
   "dsh": {
     "bundle": {

@@ -161,4 +161,27 @@ const client: UserConfig = {
   },
 }
 
-export default [lib, client]
+/**
+ * Third artifact — the desktop companion entry for Petween Desktop (the
+ * Electron shell). Plain ESM (no __ModuleLoader__ wrapper: the desktop bundler
+ * consumes this or, in source form, src/desktop directly). React stays
+ * external (the shell provides it); the CSS Modules inline plugin is reused
+ * so the settings card ships its styles.
+ */
+const desktop: UserConfig = {
+  name: 'petween-physics/desktop',
+  entry: { desktop: 'src/desktop/index.ts' },
+  outDir: 'lib',
+  format: ['esm'],
+  platform: 'browser',
+  target: 'es2022',
+  dts: false, // declarations come from tsc -b (lib/types/desktop)
+  clean: false,
+  deps: {
+    neverBundle: [/^react(\/.+)?$/],
+  },
+  plugins: [cssModulesInline('petween-physics')],
+  outputOptions: { entryFileNames: 'desktop.js' },
+}
+
+export default [lib, client, desktop]
