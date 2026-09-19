@@ -144,6 +144,7 @@ interface PetResponse {
   pet?: {
     name?: unknown
     pluginConfigs?: unknown
+    poses?: unknown
   }
 }
 
@@ -155,6 +156,25 @@ function sanitizeRemap(raw: unknown): Record<string, string> | undefined {
     if (typeof to === 'string') remap[from] = to
   }
   return Object.keys(remap).length > 0 ? remap : undefined
+}
+
+/**
+ * poseKey → assetId off a pet record (main plugin, read-only), for the
+ * collision-box alpha scan: the stage snapshot's poseKey is already the
+ * POST-fallback slot, so a flat lookup needs no fallback-chain replay. Null
+ * when the record or its poses table is absent; an HTTP/network failure
+ * still throws for the caller to swallow silently.
+ */
+export async function getPetPoseAssets(petId: string): Promise<Record<string, string> | null> {
+  const body = await request<PetResponse>(`${PETWEEN_PETS_URL}/${encodeURIComponent(petId)}`)
+  const poses = body.pet?.poses
+  if (typeof poses !== 'object' || poses === null || Array.isArray(poses)) return null
+  const poseAssets: Record<string, string> = {}
+  for (const [poseKey, value] of Object.entries(poses as Record<string, unknown>)) {
+    const assetId = (value as { assetId?: unknown } | null | undefined)?.assetId
+    if (typeof assetId === 'string' && assetId !== '') poseAssets[poseKey] = assetId
+  }
+  return poseAssets
 }
 
 /**

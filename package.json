@@ -1,6 +1,6 @@
 {
   "name": "petween-physics",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Throw-physics companion plugin for Petween — fling the pet, gravity + wall bounces, configurable impact effects",
   "license": "MIT",
   "packageManager": "pnpm@10.34.5",

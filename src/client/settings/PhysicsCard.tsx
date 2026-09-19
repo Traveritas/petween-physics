@@ -71,6 +71,8 @@ const CHANGE_LABELS: Record<string, string> = {
   'flashPose.enabled': '碰壁时切换图片',
   'flashPose.poseKey': '碰壁切图 Pose',
   'flashPose.holdMs': '切图保持时长',
+  'collision.ignoreTransparentPixels': '碰撞箱忽略透明像素',
+  'collision.alphaThreshold': '透明判定阈值',
   slideAnimationId: '滑动动画',
   slideInterrupt: '滑动动画打断',
   sampleWindowMs: '测速窗口',
@@ -217,6 +219,12 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
     value: ThrowPhysicsPluginConfig['flashPose'][typeof field],
   ): void => {
     scheduleSave({ ...draft, flashPose: { ...draft.flashPose, [field]: value } })
+  }
+  const patchCollision = (
+    field: keyof ThrowPhysicsPluginConfig['collision'],
+    value: ThrowPhysicsPluginConfig['collision'][typeof field],
+  ): void => {
+    scheduleSave({ ...draft, collision: { ...draft.collision, [field]: value } })
   }
   const patchTop = (field: 'sampleWindowMs' | 'effectDebounceMs' | 'applyFalseTolerance', value: number): void => {
     scheduleSave({ ...draft, [field]: value })
@@ -494,6 +502,22 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
         value={flash.holdMs}
         disabled={!flash.enabled}
         onChange={(value) => patchFlash('holdMs', value)}
+      />
+
+      <div className={styles.groupTitle}>碰撞箱</div>
+      <Toggle
+        label="忽略图片透明像素（按可见像素碰撞）"
+        checked={draft.collision.ignoreTransparentPixels}
+        onChange={(checked) => patchCollision('ignoreTransparentPixels', checked)}
+      />
+      <NumberField
+        label="透明判定阈值"
+        min={ranges['collision.alphaThreshold'].min}
+        max={ranges['collision.alphaThreshold'].max}
+        step={1}
+        value={draft.collision.alphaThreshold}
+        disabled={!draft.collision.ignoreTransparentPixels}
+        onChange={(value) => patchCollision('alphaThreshold', value)}
       />
 
       <details className={styles.advanced}>

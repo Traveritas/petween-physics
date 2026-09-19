@@ -19,6 +19,7 @@
  */
 import type { ComponentType } from 'react'
 import { physicsConfigHub } from '../client/config-hub'
+import { createPoseCollisionBoundsProvider } from '../client/pose-collision-bounds'
 import { PhysicsCard } from '../client/settings/PhysicsCard'
 import { PLUGIN_ID, sharedPetConfigCenter } from '../client/shared-pet-config'
 import { ThrowController } from '../client/throw-controller'
@@ -95,6 +96,10 @@ export function createPhysicsDesktopCompanion(): DesktopCompanion {
           return () => cancelAnimationFrame(handle)
         },
         isHidden: () => document.hidden,
+        // Alpha-tight collision bounds (collision.ignoreTransparentPixels):
+        // same provider as the DSH entry — root-relative HTTP + DOM canvas
+        // are both same-origin under the desktop local-server.
+        getPoseAlphaBounds: createPoseCollisionBoundsProvider(),
       })
 
       // §23: rAF never fires while hidden — land a mid-air flight at once.

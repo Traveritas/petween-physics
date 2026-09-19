@@ -43,7 +43,7 @@ dsh plugin --profile web remove petween-physics
 **全部参数均可在设置卡片中运行时编辑**:打开 DSH 设置面板,找到 "Petween Physics" 卡片
 (紧跟主插件的 "Petween" 卡片之后),按分组调整——物理(重力/弹性/摩擦/甩出倍率/起掷与落定
 速度/速度上限/飞行兜底)、碰壁动画(开关/动画下拉/打断开关)、碰壁切图(开关/pose 六选一/保持
-时长)、落地滑动(最小反弹高度/地面摩擦/滑动动画下拉),采样/去抖/容差收在"高级"折叠区。
+时长)、落地滑动(最小反弹高度/地面摩擦/滑动动画下拉)、碰撞箱(忽略透明像素/透明判定阈值),采样/去抖/容差收在"高级"折叠区。
 改动停手 300ms 后自动保存(原子写盘),卡片头部显示保存中/已保存/保存失败状态;"恢复默认"一键
 写回出厂值。
 
@@ -90,6 +90,8 @@ config——服务端按 `CONFIG_NUMERIC_FIELDS` 表**校验并拒绝**未知字
 | `flashPose.enabled` | false | — | 碰壁时切换图片 |
 | `flashPose.poseKey` | `success` | 六个 pose 之一 | 切换到的 pose 槽位 |
 | `flashPose.holdMs` | 800 | 0..60000 | 图片保持 ms(≤0 保持到下个状态变化) |
+| `collision.ignoreTransparentPixels` | false | — | 碰撞箱按当前姿势图的**可见像素**收紧(bodyRect insets 之上再剥掉图片文件自带的透明边缘;逐图扫描缓存,数据缺失/扫描失败静默回退图片盒) |
+| `collision.alphaThreshold` | 1 | 1..255(整数) | 像素 alpha ≥ 此值才算可见;1 = 只忽略全透明像素,调大可忽略抗锯齿残影 |
 | `slideAnimationId` | `null` | null 或非空 ≤200 字符 | 进入地面滑动时播放一次的动画 id;null = 不播 |
 | `slideInterrupt` | true | — | 滑动动画开始播放时打断在播动画(slideAnimationId 为 null 时无意义) |
 | `sampleWindowMs` | 120 | 10..2000 | 拖拽测速窗口 |
@@ -108,6 +110,11 @@ config——服务端按 `CONFIG_NUMERIC_FIELDS` 表**校验并拒绝**未知字
     起飞时申请独占位置租约(`requestPositionControl`),rAF 逐帧 `driver.apply`;碰壁触发效果(同壁去抖);
     落定 `commit()` 后立即 `release()`。用户半空抓取、页面隐藏、会话消失、dispose 都会终止飞行。
     配置经 `getConfig()` **逐手势/逐帧读取最新值**——设置卡片保存后立即生效,无需重建控制器。
+  - `alpha-bounds.ts` + `pose-collision-bounds.ts`:`collision.ignoreTransparentPixels` 的可见像素
+    碰撞箱。纯扫描器求姿势图 alpha 紧致包围盒(归一化分数,一次扫描服务所有缩放);provider 负责
+    (petId, poseKey)→宠物记录(逐问取新,在飞去重)→`/petween-assets/<id>`→canvas 扫描(≤512px
+    降采样,按 URL+阈值缓存,失败不落缓存);控制器把分数乘进 bodyRect insets,数据缺失/扫描未完成
+    静默回退图片盒。快照的 poseKey 已是 fallback 解析后的槽位,故无需复刻主插件 fallback 链。
   - `config-hub.ts`:轻量配置中心(load 记忆化/subscribe/update;加载失败静默回落默认值并暴露错误态)。
   - `settings/PhysicsCard.tsx`:`settings.section` 卡片(order 135),300ms 防抖自动保存 + 恢复默认。
   - `types.ts`:主插件服务契约的本地类型镜像(独立包,不 import 主插件运行时代码)。

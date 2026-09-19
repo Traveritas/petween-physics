@@ -121,6 +121,7 @@ describe('PUT /api/petween-physics/config', () => {
       },
       bounceAnimation: { enabled: true, id: 'user:physics-bounce-pop', interrupt: true },
       flashPose: { enabled: true, poseKey: 'error', holdMs: 900 },
+      collision: { ignoreTransparentPixels: true, alphaThreshold: 8 },
       slideAnimationId: 'user:physics-slide-dash',
       slideInterrupt: false,
       sampleWindowMs: 140,
@@ -305,5 +306,31 @@ describe('validation helpers', () => {
     expect(repairConfig({ slideInterrupt: 'yes' }).slideInterrupt).toBe(true) // invalid → DEFAULT true
     expect(repairConfig({ slideInterrupt: false }).slideInterrupt).toBe(false) // valid survives
     expect(repairConfig({}).slideInterrupt).toBe(true) // legacy file without the field → default
+  })
+
+  it('collision: defaults off, strict range-checks alphaThreshold, lenient repairs legacy files', () => {
+    expect(DEFAULT_CONFIG.collision).toEqual({ ignoreTransparentPixels: false, alphaThreshold: 1 })
+    // Absent section keeps the base; a live toggle merges field-wise.
+    const base = structuredClone(DEFAULT_CONFIG)
+    expect(validateConfigPatch({ physics: { gravity: 4000 } }, base).collision).toEqual(base.collision)
+    const merged = validateConfigPatch({ collision: { ignoreTransparentPixels: true, alphaThreshold: 16 } }, base)
+    expect(merged.collision).toEqual({ ignoreTransparentPixels: true, alphaThreshold: 16 })
+    // Strict: unknown field, non-boolean, out-of-range and fractional thresholds reject.
+    expect(() => validateConfigPatch({ collision: { snug: true } }, base)).toThrow(/collision\.snug: unknown field/)
+    expect(() =>
+      validateConfigPatch({ collision: { ignoreTransparentPixels: 1 } }, base),
+    ).toThrow(/collision\.ignoreTransparentPixels: expected a boolean/)
+    for (const bad of [0, 256, 1.5]) {
+      expect(() => validateConfigPatch({ collision: { alphaThreshold: bad } }, base)).toThrow(
+        /collision\.alphaThreshold/,
+      )
+    }
+    // Lenient: a legacy file without the section lands on defaults; invalid
+    // values reset field-wise while the valid sibling survives.
+    expect(repairConfig({}).collision).toEqual(DEFAULT_CONFIG.collision)
+    expect(repairConfig({ collision: { ignoreTransparentPixels: true, alphaThreshold: 999 } }).collision).toEqual({
+      ignoreTransparentPixels: true,
+      alphaThreshold: DEFAULT_CONFIG.collision.alphaThreshold,
+    })
   })
 })

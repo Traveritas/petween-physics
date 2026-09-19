@@ -18,6 +18,7 @@
  * The user's hand ALWAYS wins: a drag 'start' mid-flight aborts it without
  * committing (the drag's own end path persists the position).
  */
+import type { NormalizedAlphaBounds } from './alpha-bounds'
 import type { ThrowPhysicsPluginConfig } from './config'
 import { releaseVelocity, stepBall, type BallState, type ViewportBounds, type Wall } from './physics'
 import type { PetweenClientService, PositionDriver, StageSnapshot } from './types'
@@ -63,6 +64,15 @@ export interface ThrowControllerDeps {
   scheduleFrame(callback: () => void): () => void
   /** document.hidden — a hidden page must not keep a flight alive (§23). */
   isHidden(): boolean
+  /**
+   * Alpha-tight collision bounds seam (the collision.ignoreTransparentPixels
+   * setting): resolves the visible-pixel bounds of the CURRENT pose's image,
+   * normalized within that image. Absent when the host wired no scanner;
+   * null answers mean "unknown" (missing pet/pose data or a failed scan) and
+   * the controller silently keeps the pose-image box. Async by nature — a
+   * flight may start on image-box insets and tighten a frame or two later.
+   */
+  getPoseAlphaBounds?: (petId: string, poseKey: string) => Promise<NormalizedAlphaBounds | null>
 }
 
 /**
@@ -72,6 +82,10 @@ export interface ThrowControllerDeps {
  * a promise that neither resolves nor rejects.
  */
 const COMMIT_SETTLE_TIMEOUT_MS = 20_000
+
+/** The (petId, poseKey) pair a stage snapshot currently shows ('' parts when absent). */
+const poseIdentityOf = (snapshot: StageSnapshot): string =>
+  `${snapshot.activePetId ?? ''}\n${snapshot.poseKey ?? ''}`
 
 export class ThrowController {
   private readonly deps: ThrowControllerDeps
@@ -86,6 +100,13 @@ export class ThrowController {
   private cancelFrame: (() => void) | null = null
   /** Per-wall last effect time (ms) for the same-wall debounce. */
   private readonly lastEffectAt = new Map<Wall, number>()
+  /** Pose identity the current poseBounds answer belongs to; null = none. */
+  private poseBoundsKey: string | null = null
+  private poseBounds: NormalizedAlphaBounds | null = null
+  /** Ask currently in flight; blocks duplicate asks for one pose identity. */
+  private poseBoundsPendingKey: string | null = null
+  /** Last pose identity seen on stage; change-detects the bounds refresh. */
+  private lastPoseIdentity: string | null = null
 
   constructor(deps: ThrowControllerDeps) {
     this.deps = deps
@@ -105,6 +126,10 @@ export class ThrowController {
     this.sampling = false
     this.samples = []
     this.latestSnapshot = null
+    this.poseBounds = null
+    this.poseBoundsKey = null
+    this.poseBoundsPendingKey = null
+    this.lastPoseIdentity = null
   }
 
   /**
@@ -131,7 +156,20 @@ export class ThrowController {
       this.endFlight(false)
       this.sampling = false
       this.samples = []
+      this.poseBounds = null
+      this.poseBoundsKey = null
+      this.poseBoundsPendingKey = null
+      this.lastPoseIdentity = null
       return
+    }
+    // Pose identity change (pet switch, state pose swap, our own flashPose):
+    // re-resolve the alpha-tight bounds for the new pose. Cheap on the hot
+    // path — mid-flight snapshots echo every frame, and only an identity
+    // CHANGE reaches the config read inside refreshPoseBounds.
+    const identity = poseIdentityOf(snapshot)
+    if (identity !== this.lastPoseIdentity) {
+      this.lastPoseIdentity = identity
+      this.refreshPoseBounds()
     }
     if (this.sampling) this.pushSample(snapshot)
     // Mid-flight snapshot pushes (position echoes from our own apply, plus
@@ -148,6 +186,10 @@ export class ThrowController {
       this.endFlight(false)
       this.sampling = true
       this.samples = []
+      // Prewarm the alpha-tight bounds while the hand still holds the pet:
+      // the scan then lands before release in the common case, so the whole
+      // flight runs on tight insets instead of tightening a frame in.
+      this.refreshPoseBounds()
       if (this.latestSnapshot !== null) {
         this.samples.push({
           x: this.latestSnapshot.x,
@@ -205,6 +247,9 @@ export class ThrowController {
         if (phase === 'start') this.endFlight(false)
       }),
     }
+    // Covers "setting enabled mid-drag" (the drag-start prewarm ran while it
+    // was off) and re-asks after a null answer from the previous gesture.
+    this.refreshPoseBounds()
     this.scheduleNextFrame()
   }
 
@@ -244,12 +289,24 @@ export class ThrowController {
       // IMAGE, not by the square's transparent padding (the phantom-gap
       // overshoot the square approximation carried).
       const margin = (value: number): number => Math.max(0, value)
-      insets = {
-        left: margin(body.x - snapshot.x),
-        top: margin(body.y - snapshot.y),
-        right: margin(snapshot.x + boxSize - (body.x + body.width)),
-        bottom: margin(snapshot.y + boxSize - (body.y + body.height)),
+      let left = margin(body.x - snapshot.x)
+      let top = margin(body.y - snapshot.y)
+      let right = margin(snapshot.x + boxSize - (body.x + body.width))
+      let bottom = margin(snapshot.y + boxSize - (body.y + body.height))
+      // Alpha-tight refinement (collision.ignoreTransparentPixels): shrink
+      // the margins further by the pose image's own transparent edges, so
+      // the walls are hit by visible PIXELS, not the image file's padding.
+      // Fractions of the image scale with the live <img> box (user scale and
+      // pose zoom included). Only an answer for the pose STILL on stage
+      // applies — the async scan races pose swaps.
+      const alpha = this.poseBoundsFor(snapshot, config)
+      if (alpha !== null) {
+        left += alpha.left * body.width
+        top += alpha.top * body.height
+        right += alpha.right * body.width
+        bottom += alpha.bottom * body.height
       }
+      insets = { left, top, right, bottom }
     } else {
       insets = undefined
     }
@@ -290,6 +347,51 @@ export class ThrowController {
       return
     }
     this.scheduleNextFrame()
+  }
+
+  /**
+   * Ask the seam for the current pose's alpha-tight bounds. Deduped per pose
+   * identity: a resolved NON-null answer never re-asks (the scan cache makes
+   * even a re-ask free, but the pet-record fetch is not free); a resolved
+   * null (missing data) re-arms on the next drag start / flight start so a
+   * late asset import or a transient scan failure recovers within one
+   * gesture. Never throws into its caller — this runs on the snapshot path.
+   */
+  private refreshPoseBounds(): void {
+    const seam = this.deps.getPoseAlphaBounds
+    if (seam === undefined) return
+    const snapshot = this.latestSnapshot
+    if (snapshot === null) return
+    const key = poseIdentityOf(snapshot)
+    if (key === this.poseBoundsPendingKey) return
+    if (key === this.poseBoundsKey && this.poseBounds !== null) return
+    if (!this.deps.getConfig().collision.ignoreTransparentPixels) return
+    const petId = snapshot.activePetId
+    const poseKey = snapshot.poseKey
+    if (typeof petId !== 'string' || petId === '' || typeof poseKey !== 'string' || poseKey === '') return
+    this.poseBoundsPendingKey = key
+    void seam(petId, poseKey)
+      .catch(() => null)
+      .then((bounds) => {
+        if (this.disposed) return
+        if (this.poseBoundsPendingKey === key) this.poseBoundsPendingKey = null
+        // Stale guard: only an answer for the pose STILL on stage may apply;
+        // a swap that raced the scan gets its own refresh from onStage.
+        const current = this.latestSnapshot
+        if (current === null || poseIdentityOf(current) !== key) return
+        this.poseBoundsKey = key
+        this.poseBounds = bounds
+      })
+  }
+
+  /** The alpha-tight bounds applicable to this frame, or null (off/unknown/stale). */
+  private poseBoundsFor(
+    snapshot: StageSnapshot,
+    config: ThrowPhysicsPluginConfig,
+  ): NormalizedAlphaBounds | null {
+    if (!config.collision.ignoreTransparentPixels) return null
+    if (this.poseBounds === null || this.poseBoundsKey === null) return null
+    return this.poseBoundsKey === poseIdentityOf(snapshot) ? this.poseBounds : null
   }
 
   /**

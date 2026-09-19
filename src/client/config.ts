@@ -77,10 +77,32 @@ export interface FlashPoseConfig {
   holdMs: number
 }
 
+/**
+ * Collision-box refinement against the pose image's transparent margins
+ * (the bodyRect insets already remove the stage-square padding; this goes
+ * one level deeper, to the image file's own transparent edges).
+ */
+export interface CollisionConfig {
+  /**
+   * true = the wall/floor collision box tightens to the VISIBLE pixels of
+   * the current pose image (each image scanned once and cached; a missing
+   * pet/pose mapping or a failed scan silently falls back to the pose-image
+   * box). Default false keeps the pose <img> layout box.
+   */
+  ignoreTransparentPixels: boolean
+  /**
+   * Alpha (1..255) at/above which a scanned pixel counts as visible; 1 (the
+   * default) ignores only fully-transparent pixels. Raise it to also ignore
+   * faint anti-aliased fringes.
+   */
+  alphaThreshold: number
+}
+
 export interface ThrowPhysicsPluginConfig {
   physics: PhysicsConfig
   bounceAnimation: BounceAnimationConfig
   flashPose: FlashPoseConfig
+  collision: CollisionConfig
   /**
    * Animation played ONCE when the ground slide begins (the bounces fell
    * below minBounceHeightPx and the pet starts skidding). Null = silent
@@ -112,6 +134,7 @@ export interface PhysicsConfigPatch {
   physics?: Partial<PhysicsConfig>
   bounceAnimation?: Partial<BounceAnimationConfig>
   flashPose?: Partial<FlashPoseConfig>
+  collision?: Partial<CollisionConfig>
   slideAnimationId?: string | null
   slideInterrupt?: boolean
   sampleWindowMs?: number
@@ -143,6 +166,7 @@ const NUMERIC_FIELDS_SOURCE = {
   'physics.minBounceHeightPx': { min: 0, max: 2_000 },
   'physics.groundFriction': { min: 0, max: 50 },
   'flashPose.holdMs': { min: 0, max: 60_000 },
+  'collision.alphaThreshold': { min: 1, max: 255, integer: true },
   sampleWindowMs: { min: 10, max: 2_000 },
   effectDebounceMs: { min: 0, max: 5_000 },
   applyFalseTolerance: { min: 1, max: 60, integer: true },
@@ -181,6 +205,10 @@ export const DEFAULT_CONFIG: ThrowPhysicsPluginConfig = {
     enabled: false,
     poseKey: 'success',
     holdMs: 800,
+  },
+  collision: {
+    ignoreTransparentPixels: false,
+    alphaThreshold: 1,
   },
   slideAnimationId: null,
   slideInterrupt: true,
@@ -223,10 +251,15 @@ export class ConfigValidationError extends Error {
 const PHYSICS_SECTION = 'physics'
 const BOUNCE_SECTION = 'bounceAnimation'
 const FLASH_SECTION = 'flashPose'
+const COLLISION_SECTION = 'collision'
 const SLIDE_ANIMATION_FIELD = 'slideAnimationId'
 const SLIDE_INTERRUPT_FIELD = 'slideInterrupt'
 const TOP_LEVEL_NUMERIC = ['sampleWindowMs', 'effectDebounceMs', 'applyFalseTolerance'] as const
-type SectionKey = typeof PHYSICS_SECTION | typeof BOUNCE_SECTION | typeof FLASH_SECTION
+type SectionKey =
+  | typeof PHYSICS_SECTION
+  | typeof BOUNCE_SECTION
+  | typeof FLASH_SECTION
+  | typeof COLLISION_SECTION
 
 const SECTION_FIELDS: Record<SectionKey, readonly string[]> = {
   physics: [
@@ -243,6 +276,7 @@ const SECTION_FIELDS: Record<SectionKey, readonly string[]> = {
   ],
   bounceAnimation: ['enabled', 'id', 'interrupt'],
   flashPose: ['enabled', 'poseKey', 'holdMs'],
+  collision: ['ignoreTransparentPixels', 'alphaThreshold'],
 }
 
 type Target = { [key: string]: unknown }
@@ -300,7 +334,7 @@ function checkSectionField(
     target[field] = value
     return
   }
-  if (field === 'enabled' || field === 'interrupt') {
+  if (field === 'enabled' || field === 'interrupt' || field === 'ignoreTransparentPixels') {
     checkBoolean(path, value, target, field, issues)
     return
   }
@@ -320,7 +354,7 @@ function mergeConfig(patch: unknown, base: ThrowPhysicsPluginConfig, strict: boo
   }
   const issues: ConfigIssue[] = []
   for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
-    if (key === PHYSICS_SECTION || key === BOUNCE_SECTION || key === FLASH_SECTION) {
+    if (key === PHYSICS_SECTION || key === BOUNCE_SECTION || key === FLASH_SECTION || key === COLLISION_SECTION) {
       const section = key as SectionKey
       if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         issues.push({ path: key, message: 'expected an object' })

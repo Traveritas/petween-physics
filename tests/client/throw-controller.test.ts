@@ -11,9 +11,11 @@
  * - session loss and dispose clean everything up.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { NormalizedAlphaBounds } from '../../src/client/alpha-bounds'
 import {
   DEFAULT_CONFIG,
   type BounceAnimationConfig,
+  type CollisionConfig,
   type FlashPoseConfig,
   type PhysicsConfig,
   type ThrowPhysicsPluginConfig,
@@ -167,11 +169,14 @@ interface HarnessOverrides {
   physics?: Partial<PhysicsConfig>
   bounceAnimation?: Partial<BounceAnimationConfig>
   flashPose?: Partial<FlashPoseConfig>
+  collision?: Partial<CollisionConfig>
   slideAnimationId?: string | null
   slideInterrupt?: boolean
   sampleWindowMs?: number
   effectDebounceMs?: number
   applyFalseTolerance?: number
+  /** The alpha-tight bounds seam; absent mirrors an unwired host. */
+  getPoseAlphaBounds?: ThrowControllerDeps['getPoseAlphaBounds']
 }
 
 const makeHarness = (configOverrides: HarnessOverrides = {}): Harness => {
@@ -186,6 +191,7 @@ const makeHarness = (configOverrides: HarnessOverrides = {}): Harness => {
     physics: { ...DEFAULT_CONFIG.physics, ...configOverrides.physics },
     bounceAnimation: { ...DEFAULT_CONFIG.bounceAnimation, ...configOverrides.bounceAnimation },
     flashPose: { ...DEFAULT_CONFIG.flashPose, ...configOverrides.flashPose },
+    collision: { ...DEFAULT_CONFIG.collision, ...configOverrides.collision },
   }
   const clock = { value: 0 }
   const hidden = { value: false }
@@ -205,6 +211,9 @@ const makeHarness = (configOverrides: HarnessOverrides = {}): Harness => {
       }
     },
     isHidden: () => hidden.value,
+    ...(configOverrides.getPoseAlphaBounds === undefined
+      ? {}
+      : { getPoseAlphaBounds: configOverrides.getPoseAlphaBounds }),
   }
   const controller = new ThrowController(deps)
   return {
@@ -740,5 +749,169 @@ describe('flight bounds from the snapshot widening (petween ≥2026-08-27)', () 
     }
     expect(Math.min(...driver.applyCalls.map((call) => call.x))).toBe(-30)
     expect(h.service.plays.length).toBeGreaterThanOrEqual(1) // the wall effect fired at image contact
+  })
+})
+
+describe('alpha-tight collision bounds (collision.ignoreTransparentPixels)', () => {
+  /**
+   * Seam stub whose answers the test resolves by hand: every call parks a
+   * deferred, keyed by call order, so a test can race pose swaps against
+   * scans exactly like the browser does.
+   */
+  const deferredSeam = () => {
+    const calls: Array<{
+      petId: string
+      poseKey: string
+      resolve: (bounds: NormalizedAlphaBounds | null) => void
+      promise: Promise<NormalizedAlphaBounds | null>
+    }> = []
+    const seam = (petId: string, poseKey: string): Promise<NormalizedAlphaBounds | null> => {
+      let resolve!: (bounds: NormalizedAlphaBounds | null) => void
+      const promise = new Promise<NormalizedAlphaBounds | null>((res) => {
+        resolve = res
+      })
+      calls.push({ petId, poseKey, resolve, promise })
+      return promise
+    }
+    return { calls, seam }
+  }
+
+  // Same geometry as the bodyRect test above: square 100px, image box at
+  // +30 inside it, 40px wide — plus the pose identity the seam needs.
+  const snap = (x: number, y: number, poseKey = 'idle'): StageSnapshot =>
+    snapshotAt(x, y, {
+      bodyRect: { x: x + 30, y, width: 40, height: 100 },
+      activePetId: 'pet-1',
+      poseKey,
+    })
+
+  it('is inert while the setting is off: the seam is never asked, image-box insets apply', () => {
+    const { calls, seam } = deferredSeam()
+    const h = makeHarness({
+      physics: { gravity: 0, restitution: 0.6, friction: 0 },
+      getPoseAlphaBounds: seam,
+    })
+    performDrag(h, { x: 500, y: 100 }, { vx: -4000, vy: 0 }, (x, y) => snap(x, y))
+    expect(calls).toHaveLength(0)
+    const driver = h.service.drivers[0]!
+    for (let frame = 0; frame < 30; frame += 1) {
+      h.clock.value += 16
+      h.pumpFrames(1)
+    }
+    expect(Math.min(...driver.applyCalls.map((call) => call.x))).toBe(-30)
+  })
+
+  it('tightens the wall contact by the image file’s own transparent edge', async () => {
+    const { calls, seam } = deferredSeam()
+    const h = makeHarness({
+      physics: { gravity: 0, restitution: 0.6, friction: 0 },
+      collision: { ignoreTransparentPixels: true },
+      getPoseAlphaBounds: seam,
+    })
+    // The initial snapshot push asks for the pose's bounds; resolve BEFORE
+    // the throw so the whole flight runs on tight insets.
+    h.service.pushStage(snap(500, 100))
+    expect(calls).toHaveLength(1)
+    calls[0]!.resolve({ left: 0.5, top: 0, right: 0, bottom: 0 })
+    await flushMicrotasks()
+    performDrag(h, { x: 500, y: 100 }, { vx: -4000, vy: 0 }, (x, y) => snap(x, y))
+    const driver = h.service.drivers[0]!
+    for (let frame = 0; frame < 30; frame += 1) {
+      h.clock.value += 16
+      h.pumpFrames(1)
+    }
+    // Image-box margin 30 + alpha edge 0.5 × 40px body = 50px: the SQUARE
+    // reaches −50 before the leftmost visible PIXEL touches the wall.
+    expect(Math.min(...driver.applyCalls.map((call) => call.x))).toBe(-50)
+    expect(h.service.plays.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('falls back to the image box when the seam answers null (unknown data)', async () => {
+    const { calls, seam } = deferredSeam()
+    const h = makeHarness({
+      physics: { gravity: 0, restitution: 0.6, friction: 0 },
+      collision: { ignoreTransparentPixels: true },
+      getPoseAlphaBounds: seam,
+    })
+    h.service.pushStage(snap(500, 100))
+    calls[0]!.resolve(null)
+    await flushMicrotasks()
+    performDrag(h, { x: 500, y: 100 }, { vx: -4000, vy: 0 }, (x, y) => snap(x, y))
+    const driver = h.service.drivers[0]!
+    for (let frame = 0; frame < 30; frame += 1) {
+      h.clock.value += 16
+      h.pumpFrames(1)
+    }
+    expect(Math.min(...driver.applyCalls.map((call) => call.x))).toBe(-30)
+  })
+
+  it('a stale answer for a swapped-away pose never applies', async () => {
+    const { calls, seam } = deferredSeam()
+    const h = makeHarness({
+      physics: { gravity: 0, restitution: 0.6, friction: 0 },
+      collision: { ignoreTransparentPixels: true },
+      getPoseAlphaBounds: seam,
+    })
+    h.service.pushStage(snap(500, 100, 'idle')) // asks for idle
+    h.service.pushStage(snap(500, 100, 'thinking')) // pose swapped before the scan landed
+    expect(calls.map((call) => call.poseKey)).toEqual(['idle', 'thinking'])
+    calls[0]!.resolve({ left: 0.5, top: 0, right: 0, bottom: 0 }) // late idle answer: discarded
+    calls[1]!.resolve(null)
+    await flushMicrotasks()
+    performDrag(h, { x: 500, y: 100 }, { vx: -4000, vy: 0 }, (x, y) => snap(x, y, 'thinking'))
+    const driver = h.service.drivers[0]!
+    for (let frame = 0; frame < 30; frame += 1) {
+      h.clock.value += 16
+      h.pumpFrames(1)
+    }
+    expect(Math.min(...driver.applyCalls.map((call) => call.x))).toBe(-30) // no tightening leaked
+  })
+
+  it('prewarms at drag start and re-arms a null answer on the next gesture', async () => {
+    const { calls, seam } = deferredSeam()
+    const h = makeHarness({
+      collision: { ignoreTransparentPixels: true },
+      getPoseAlphaBounds: seam,
+    })
+    h.service.pushStage(snap(500, 100))
+    expect(calls).toHaveLength(1) // the initial identity change asked
+    h.service.emitDrag('start')
+    expect(calls).toHaveLength(1) // same identity, already asked — deduped
+    calls[0]!.resolve(null) // the answer was "unknown"
+    await flushMicrotasks()
+    h.service.emitDrag('end') // park (slow release)
+    h.service.emitDrag('start') // next gesture: a null answer may re-ask
+    expect(calls).toHaveLength(2)
+    calls[1]!.resolve({ left: 0, top: 0, right: 0, bottom: 0 })
+    await flushMicrotasks()
+    // A resolved non-null answer stays put across gestures.
+    h.service.emitDrag('end')
+    h.service.emitDrag('start')
+    expect(calls).toHaveLength(2)
+  })
+
+  it('a pose swap mid-flight re-asks and the answer tightens the very next frames', async () => {
+    const { calls, seam } = deferredSeam()
+    const h = makeHarness({
+      physics: { gravity: 0, restitution: 0.6, friction: 0 },
+      collision: { ignoreTransparentPixels: true },
+      getPoseAlphaBounds: seam,
+    })
+    h.service.pushStage(snap(500, 100))
+    calls[0]!.resolve(null) // flight starts on image-box insets
+    await flushMicrotasks()
+    performDrag(h, { x: 500, y: 100 }, { vx: -4000, vy: 0 }, (x, y) => snap(x, y))
+    const driver = h.service.drivers[0]!
+    h.clock.value += 16
+    h.pumpFrames(1) // flying on −30 bounds
+    h.service.pushStage(snap(driver.applyCalls[0]!.x, 100, 'working')) // pose swap mid-flight
+    expect(calls[calls.length - 1]!.poseKey).toBe('working')
+    calls[calls.length - 1]!.resolve({ left: 0.5, top: 0, right: 0, bottom: 0 })
+    await flushMicrotasks()
+    for (let frame = 0; frame < 30; frame += 1) {
+      h.clock.value += 16
+      h.pumpFrames(1)
+    }
+    expect(Math.min(...driver.applyCalls.map((call) => call.x))).toBe(-50)
   })
 })

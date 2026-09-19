@@ -20,6 +20,7 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // type-checks. VALUE-importing this package is forbidden (bundle purity).
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { physicsConfigHub } from './config-hub'
+import { createPoseCollisionBoundsProvider } from './pose-collision-bounds'
 import { PhysicsCard } from './settings/PhysicsCard'
 import { PLUGIN_ID, sharedPetConfigCenter } from './shared-pet-config'
 import { ThrowController } from './throw-controller'
@@ -96,6 +97,9 @@ export function apply(ctx: ClientContext) {
       return () => cancelAnimationFrame(handle)
     },
     isHidden: () => document.hidden,
+    // Alpha-tight collision bounds (collision.ignoreTransparentPixels):
+    // pet record → asset URL → cached canvas scan; all failures silent.
+    getPoseAlphaBounds: createPoseCollisionBoundsProvider(),
   })
   // §23 for real: rAF callbacks never fire while the page is hidden, so the
   // controller's in-frame hidden check alone would freeze a flight mid-air
