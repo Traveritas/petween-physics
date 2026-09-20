@@ -528,3 +528,89 @@ describe('PhysicsCard', () => {
     expect(seams.sendConfig).not.toHaveBeenCalled()
   })
 })
+
+describe('PhysicsCard (controlled mode)', () => {
+  it('renders from props.value without hub traffic and hides the self-save state line', async () => {
+    const { hub, seams } = makeHub()
+    const onChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <PhysicsCard value={structuredClone(DEFAULT_CONFIG)} onChange={onChange} hub={hub} fetchAnimations={vi.fn(async () => ({ customs: [], warnings: [] }))} />,
+      )
+    })
+    expect(container.textContent).toContain('物理')
+    expect(container.textContent).toContain('碰壁动画')
+    expect(gravityInput().value).toBe('3000')
+    expect(container.textContent).not.toContain('正在加载')
+    expect(container.textContent).not.toContain('已保存') // the host bar owns save state
+    expect(seams.fetchConfig).not.toHaveBeenCalled()
+  })
+
+  it('an edit reports the FULL config through onChange immediately — no debounce, no PUT', async () => {
+    const { hub, seams } = makeHub()
+    const onChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <PhysicsCard value={structuredClone(DEFAULT_CONFIG)} onChange={onChange} hub={hub} fetchAnimations={vi.fn(async () => ({ customs: [], warnings: [] }))} />,
+      )
+    })
+    const input = gravityInput()
+    act(() => setInputValue(input, '5000'))
+    expect(onChange).not.toHaveBeenCalled() // NumberField buffers keystrokes until Enter/blur
+    act(() => commitWithEnter(input))
+    expect(onChange).toHaveBeenCalledTimes(1) // commits synchronously — no debounce in controlled mode
+    const next = onChange.mock.calls[0]![0] as ThrowPhysicsPluginConfig
+    expect(next.physics.gravity).toBe(5000)
+    expect(next.sampleWindowMs).toBe(DEFAULT_CONFIG.sampleWindowMs) // full config, not a fragment
+    expect(seams.sendConfig).not.toHaveBeenCalled()
+  })
+
+  it('恢复默认 hands DEFAULT_CONFIG to the host instead of PUTting hub.reset', async () => {
+    const { hub, seams } = makeHub()
+    const onChange = vi.fn()
+    const drifted = structuredClone(DEFAULT_CONFIG)
+    drifted.physics.gravity = 9000
+    await act(async () => {
+      root.render(
+        <PhysicsCard value={drifted} onChange={onChange} hub={hub} fetchAnimations={vi.fn(async () => ({ customs: [], warnings: [] }))} />,
+      )
+    })
+    act(() => {
+      findButton('恢复默认').click()
+    })
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange.mock.calls[0]![0]).toEqual(DEFAULT_CONFIG)
+    expect(seams.sendConfig).not.toHaveBeenCalled()
+  })
+
+  it('the §12 banner merges the offer into the draft via onChange (nested groups per-field, never replaced)', async () => {
+    const { hub, seams } = makeHub()
+    const onChange = vi.fn()
+    const share: PetPluginConfigShare = {
+      petName: '女仆',
+      config: { physics: { gravity: 5000, restitution: 0.9 }, slideAnimationId: 'builtin:click-wiggle' },
+    }
+    const { center } = makeCenter(share, hub)
+    await act(async () => {
+      root.render(
+        <PhysicsCard value={structuredClone(DEFAULT_CONFIG)} onChange={onChange} hub={hub} sharedCenter={center} fetchAnimations={vi.fn(async () => ({ customs: [], warnings: [] }))} />,
+      )
+    })
+    await act(async () => {
+      await center.checkActivePet('pet-1')
+    })
+    expect(container.textContent).toContain('宠物「女仆」分享了物理配置')
+    await act(async () => {
+      findButton('应用').click()
+    })
+    expect(onChange).toHaveBeenCalledTimes(1)
+    const next = onChange.mock.calls[0]![0] as ThrowPhysicsPluginConfig
+    expect(next.physics.gravity).toBe(5000)
+    expect(next.physics.restitution).toBe(0.9)
+    expect(next.physics.friction).toBe(DEFAULT_CONFIG.physics.friction) // group MERGED, not replaced
+    expect(next.collision).toEqual(DEFAULT_CONFIG.collision) // untouched group survives intact
+    expect(next.slideAnimationId).toBe('builtin:click-wiggle')
+    expect(container.textContent).not.toContain('分享了物理配置') // dismissed
+    expect(seams.sendConfig).not.toHaveBeenCalled()
+  })
+})

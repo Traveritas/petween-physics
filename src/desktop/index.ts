@@ -29,12 +29,32 @@ export interface DesktopCompanionContext {
   petween: PetweenClientService
 }
 
+/**
+ * Structural mirror of the shell's controlled settings-card props: the card
+ * renders `value` and reports full-config edits through `onChange`.
+ */
+export interface PluginSettingsCardProps {
+  value: unknown
+  onChange(next: unknown): void
+}
+
 export interface DesktopCompanion {
   id: string
   displayName: string
   description?: string
   /** Optional settings UI the desktop shell hosts in its 插件 section. */
-  readonly SettingsCard?: ComponentType
+  readonly SettingsCard?: ComponentType<PluginSettingsCardProps>
+  /**
+   * Optional own persisted config (dual-host plugins that keep their store
+   * outside the shell's settings document). When present the settings page
+   * edits THIS bag through the card instead of companions.options[id], and
+   * the page's apply/cancel bar saves it through this store — load/save are
+   * root-relative same-origin HTTP under the desktop local-server.
+   */
+  readonly configStore?: {
+    load(): Promise<unknown>
+    save(config: unknown): Promise<void>
+  }
   init(ctx: DesktopCompanionContext): (() => void) | void
 }
 
@@ -44,6 +64,23 @@ export function createPhysicsDesktopCompanion(): DesktopCompanion {
     displayName: '投掷物理（Petween Physics）',
     description: '拖住宠物甩出：重力 + 屏幕边界弹跳 + 可配置撞击特效',
     SettingsCard: PhysicsCard,
+    configStore: {
+      // GET/PUT /api/petween-physics/config — same route the hub uses; the
+      // page bar's PUT propagates exactly like the self-managed card's did.
+      load: async () => {
+        const response = await fetch('/api/petween-physics/config')
+        if (!response.ok) throw new Error(`GET /api/petween-physics/config -> HTTP ${response.status}`)
+        return ((await response.json()) as { config: unknown }).config
+      },
+      save: async (config) => {
+        const response = await fetch('/api/petween-physics/config', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(config),
+        })
+        if (!response.ok) throw new Error(`PUT /api/petween-physics/config -> HTTP ${response.status}`)
+      },
+    },
     init({ petween: service }) {
       let disposed = false
       let unregisterConfigProvider: (() => void) | null = null

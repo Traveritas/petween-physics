@@ -15,6 +15,12 @@
  * debounced PUT (300ms) once the user stops tweaking, sending the whole
  * config (the host merges + validates server-side). The header line mirrors
  * the hub's saving/error state; "恢复默认" PUTs DEFAULT_CONFIG.
+ *
+ * Controlled mode (dual host): pass BOTH `value` and `onChange` and the card
+ * becomes a pure control — it renders `value`, reports every edit through
+ * `onChange` (full config each time), and does no hub load/save of its own
+ * (the host page owns the draft + apply/cancel bar). Omit them for the
+ * self-managed card above; the two modes share all controls and dropdowns.
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type JSX } from 'react'
 import { getPetweenAnimations, type AnimationOption } from '../api'
@@ -99,12 +105,21 @@ export interface PhysicsCardProps {
   fetchAnimations?: () => Promise<{ customs: AnimationOption[]; warnings: string[] }>
   /** Test seam; production shares the center with the client entry's pull triggers. */
   sharedCenter?: SharedPetConfigCenter
+  /**
+   * Controlled mode: the host page's current config draft. Opaque on purpose
+   * so the desktop shell's plugin-page contract stays bag-shaped; the card
+   * itself narrows it to ThrowPhysicsPluginConfig.
+   */
+  value?: unknown
+  /** Controlled mode: reports the next full config on every edit. */
+  onChange?: (next: ThrowPhysicsPluginConfig) => void
 }
 
 export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   const hub = props.hub ?? physicsConfigHub
   const fetchAnimations = props.fetchAnimations ?? getPetweenAnimations
   const sharedCenter = props.sharedCenter ?? sharedPetConfigCenter
+  const controlled = props.value !== undefined && props.onChange !== undefined
   // Stable identities for useSyncExternalStore (prototype methods passed bare
   // would lose `this`; a fresh arrow per render would re-subscribe every render).
   const subscribe = useCallback((listener: () => void) => hub.subscribe(listener), [hub])
@@ -115,8 +130,12 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   const pendingShare = useSyncExternalStore(subscribeShared, getSharedSnapshot)
 
   // The UI draft: adopted from the hub once the first GET lands (or from the
-  // silent DEFAULT fallback on load failure), then owned by the controls.
-  const [draft, setDraft] = useState<ThrowPhysicsPluginConfig | null>(null)
+  // silent DEFAULT fallback on load failure), then owned by the controls —
+  // unless the card runs controlled, where the draft IS props.value.
+  const [selfDraft, setSelfDraft] = useState<ThrowPhysicsPluginConfig | null>(null)
+  const draft: ThrowPhysicsPluginConfig | null = controlled
+    ? (props.value as ThrowPhysicsPluginConfig)
+    : selfDraft
   /**
    * True while the draft is the load-failure DEFAULT fallback and the user
    * has not touched it: a later successful (re)load must RE-adopt the real
@@ -133,11 +152,13 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   const [pending, setPending] = useState(false)
 
   useEffect(() => {
+    if (controlled) return // no hub traffic in controlled mode — the host owns persistence
     void hub.load()
-  }, [hub])
+  }, [hub, controlled])
 
   useEffect(
     () => () => {
+      if (controlled) return
       if (saveTimer.current === null) return
       // The last edit is still inside the debounce window — flush it instead
       // of dropping it: closing the settings card right after an edit must
@@ -149,7 +170,7 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
       pendingDraft.current = null
       if (queued !== null) void hub.update(queued)
     },
-    [hub],
+    [hub, controlled],
   )
 
   // Adopt the loaded config exactly once (a mid-session external change does
@@ -157,16 +178,17 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   // except an unedited load-failure fallback draft, which a successful retry
   // replaces with the real config.
   useEffect(() => {
-    if (draft === null && (snapshot.loaded || snapshot.loadError !== null)) {
+    if (controlled) return
+    if (selfDraft === null && (snapshot.loaded || snapshot.loadError !== null)) {
       fallbackDraft.current = snapshot.loadError !== null
-      setDraft(structuredClone(snapshot.config))
+      setSelfDraft(structuredClone(snapshot.config))
       return
     }
     if (fallbackDraft.current && snapshot.loaded && snapshot.loadError === null) {
       fallbackDraft.current = false
-      setDraft(structuredClone(snapshot.config))
+      setSelfDraft(structuredClone(snapshot.config))
     }
-  }, [draft, snapshot.loaded, snapshot.loadError, snapshot.config])
+  }, [controlled, selfDraft, snapshot.loaded, snapshot.loadError, snapshot.config])
 
   // Impact-animation dropdown data source: the main plugin's custom library
   // (GET /api/petween/animations) + hardcoded builtins + the plugin
@@ -191,8 +213,13 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   }
 
   const scheduleSave = (next: ThrowPhysicsPluginConfig): void => {
+    if (controlled) {
+      // Host-owned draft: hand the full config over; no debounce, no PUT.
+      props.onChange?.(next)
+      return
+    }
     fallbackDraft.current = false // a touched fallback draft belongs to the user
-    setDraft(next)
+    setSelfDraft(next)
     setPending(true)
     if (saveTimer.current !== null) clearTimeout(saveTimer.current)
     pendingDraft.current = next
@@ -237,6 +264,10 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
   }
 
   const resetDefaults = (): void => {
+    if (controlled) {
+      props.onChange?.(structuredClone(DEFAULT_CONFIG))
+      return
+    }
     if (saveTimer.current !== null) {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
@@ -244,7 +275,7 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
     pendingDraft.current = null
     setPending(false)
     fallbackDraft.current = false // an explicit reset is user intent, not fallback
-    setDraft(structuredClone(DEFAULT_CONFIG))
+    setSelfDraft(structuredClone(DEFAULT_CONFIG))
     void hub.reset()
   }
 
@@ -256,6 +287,23 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
    * A failed PUT keeps the offer on screen (the header shows saveError).
    */
   const applySharedConfig = async (offer: PendingSharedPetConfig): Promise<void> => {
+    if (controlled) {
+      // Hand the merged blob to the host's draft (the host validates on its
+      // next save). The merge mirrors PhysicsConfigStore.update: top-level
+      // shallow, nested groups per-field — a bare `...patch` spread would
+      // replace whole groups with partials.
+      const patch = offer.patch
+      props.onChange?.({
+        ...structuredClone(draft),
+        ...patch,
+        physics: { ...draft.physics, ...patch.physics },
+        bounceAnimation: { ...draft.bounceAnimation, ...patch.bounceAnimation },
+        flashPose: { ...draft.flashPose, ...patch.flashPose },
+        collision: { ...draft.collision, ...patch.collision },
+      })
+      sharedCenter.dismiss(offer)
+      return
+    }
     if (saveTimer.current !== null) {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
@@ -265,7 +313,7 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
     await hub.update(offer.patch)
     if (hub.getSnapshot().saveError !== null) return
     fallbackDraft.current = false // the server config is real state, not a fallback
-    setDraft(structuredClone(hub.getSnapshot().config))
+    setSelfDraft(structuredClone(hub.getSnapshot().config))
     sharedCenter.dismiss(offer)
   }
 
@@ -314,13 +362,17 @@ export function PhysicsCard(props: PhysicsCardProps): JSX.Element {
     <div className={styles.card}>
       <div className={styles.cardHeader}>
         <span className={styles.cardTitle}>Petween Physics</span>
-        <span
-          className={
-            snapshot.saveError !== null ? `${styles.cardSummary} ${styles.errorText}` : styles.cardSummary
-          }
-        >
-          {saveStateText}
-        </span>
+        {/* In controlled mode the host page's apply/cancel bar owns the save
+            state; the card has no save lifecycle of its own to mirror. */}
+        {!controlled && (
+          <span
+            className={
+              snapshot.saveError !== null ? `${styles.cardSummary} ${styles.errorText}` : styles.cardSummary
+            }
+          >
+            {saveStateText}
+          </span>
+        )}
       </div>
       {snapshot.loadError !== null ? (
         <p className={styles.errorLine}>
