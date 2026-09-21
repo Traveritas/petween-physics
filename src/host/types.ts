@@ -43,7 +43,7 @@ export interface AnimationDefinitionMirror {
       easing?: string
     }>
   }>
-  events?: Array<{ at: number; type: 'pose-swap' } | { at: number; type: 'particle'; effect: 'confetti' | 'star-burst' | 'sparkle' }>
+  events?: Array<{ at: number; type: 'pose-swap' } | { at: number; type: 'particle'; effect: 'confetti' | 'star-burst' | 'sparkle' | 'heart-burst' | 'petal-fall' | 'firework' }>
   parameters?: { strength?: { default: number; min: number; max: number } }
 }
 
