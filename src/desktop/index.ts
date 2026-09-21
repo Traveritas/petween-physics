@@ -53,9 +53,29 @@ export interface DesktopCompanion {
    */
   readonly configStore?: {
     load(): Promise<unknown>
-    save(config: unknown): Promise<void>
+    /** Persists the config; resolves to the store's normalized result so the
+     *  host page can adopt it as its new baseline. */
+    save(config: unknown): Promise<unknown>
   }
   init(ctx: DesktopCompanionContext): (() => void) | void
+}
+
+/**
+ * A failed config-route call with the server's reason when there is one —
+ * a bare "HTTP 400" throws away the per-field INVALID_CONFIG diagnostics
+ * (which field, which range) the host worked to produce.
+ */
+async function describePutFailure(response: Response, method: string): Promise<string> {
+  const status = `${method} /api/petween-physics/config -> HTTP ${response.status}`
+  try {
+    const body = (await response.json()) as { error?: { message?: string } }
+    if (typeof body.error?.message === 'string' && body.error.message !== '') {
+      return `${status}: ${body.error.message}`
+    }
+  } catch {
+    // non-JSON body — keep the status line
+  }
+  return status
 }
 
 export function createPhysicsDesktopCompanion(): DesktopCompanion {
@@ -69,7 +89,7 @@ export function createPhysicsDesktopCompanion(): DesktopCompanion {
       // page bar's PUT propagates exactly like the self-managed card's did.
       load: async () => {
         const response = await fetch('/api/petween-physics/config')
-        if (!response.ok) throw new Error(`GET /api/petween-physics/config -> HTTP ${response.status}`)
+        if (!response.ok) throw new Error(await describePutFailure(response, 'GET'))
         return ((await response.json()) as { config: unknown }).config
       },
       save: async (config) => {
@@ -78,7 +98,8 @@ export function createPhysicsDesktopCompanion(): DesktopCompanion {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(config),
         })
-        if (!response.ok) throw new Error(`PUT /api/petween-physics/config -> HTTP ${response.status}`)
+        if (!response.ok) throw new Error(await describePutFailure(response, 'PUT'))
+        return ((await response.json()) as { config: unknown }).config
       },
     },
     init({ petween: service }) {

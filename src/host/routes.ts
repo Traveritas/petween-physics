@@ -111,7 +111,14 @@ function rejectsCrossOriginWrite(req: IncomingMessage): boolean {
   const method = (req.method ?? 'GET').toUpperCase()
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false
   const site = req.headers['sec-fetch-site']
-  if (typeof site === 'string') return site === 'cross-site'
+  if (typeof site === 'string') {
+    if (site === 'cross-site') return true
+    // 'same-origin' / 'none' pass; 'same-site' is NOT enough on its own —
+    // it spans origins (e.g. another localhost port), so it falls through
+    // to the Origin ↔ Host comparison below (the main plugin's semantics; a
+    // missing Origin still means a non-browser client and passes).
+    if (site === 'same-origin' || site === 'none') return false
+  }
   const origin = req.headers.origin
   if (typeof origin === 'string') {
     try {

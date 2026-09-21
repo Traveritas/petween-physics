@@ -228,6 +228,20 @@ describe('PUT /api/petween-physics/config', () => {
     // No Sec-Fetch-Site / Origin metadata (curl, CLI): allowed.
     const curlish = await put({ physics: { gravity: 5000 } })
     expect(curlish.status).toBe(200)
+
+    // same-site alone is NOT enough (it spans origins — another localhost
+    // port): it must fall through to the Origin ↔ Host check and reject a
+    // foreign origin (main-plugin semantics).
+    const sameSiteForeignOrigin = await fetch(`${base}${CONFIG_URL}`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        'sec-fetch-site': 'same-site',
+        origin: 'https://evil.example',
+      },
+      body: JSON.stringify({ physics: { gravity: 5000 } }),
+    })
+    expect(sameSiteForeignOrigin.status).toBe(403)
   })
 
   it('allows a same-origin Origin (M5b): Origin matching the Host header passes', async () => {
