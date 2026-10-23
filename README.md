@@ -1,6 +1,8 @@
+> **本仓库已停止维护并归档。** Petween 已在新仓库 [petween](https://github.com/Traveritas/petween) 重做：跨 agent（Claude Code、Codex 等）的独立桌面宠物，插件化、支持多只宠物；抛掷物理的功能已并入其中。文中提到的 petween 插件现名 [petween-dsh](https://github.com/Traveritas/petween-dsh)。
+
 # Petween Physics
 
-[petween](https://github.com/Traveritas/petween) 的"抛掷物理"附属插件（包名 `petween-physics`，前身为 `dsh-motion-pet-physics`，0.2.0 起随主插件更名）：把宠物**扔出去**，它会受重力下坠、在屏幕内弹跳，落定后停在新位置。
+[petween](https://github.com/Traveritas/petween-dsh) 的"抛掷物理"附属插件（包名 `petween-physics`，前身为 `dsh-motion-pet-physics`，0.2.0 起随主插件更名）：把宠物**扔出去**，它会受重力下坠、在屏幕内弹跳，落定后停在新位置。
 
 - 拖动宠物快速松手 → 按松手瞬间的手速起飞(采样窗口内估算释放速度)
 - 重力下坠 + 四壁反弹(宠物整体始终留在视口内)
@@ -15,7 +17,7 @@
 
 ## 安装
 
-要求：已安装 DSH（`@deepseek-ai/dsh`，在 0.1.0-rc.7 上实测）、[主插件 petween](https://github.com/Traveritas/petween)（≥ 1.2.0，需先行安装）、Node ≥ 22.18（构建工具链要求）与 pnpm。
+要求：已安装 DSH（`@deepseek-ai/dsh`，在 0.1.0-rc.7 上实测）、[主插件 petween](https://github.com/Traveritas/petween-dsh)（≥ 1.2.0，需先行安装）、Node ≥ 22.18（构建工具链要求）与 pnpm。
 
 ```bash
 git clone https://github.com/Traveritas/petween-physics.git
